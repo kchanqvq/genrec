@@ -1,0 +1,1155 @@
+# -*- Mode: POLY-ORG ;-*- ---
+#+TITLE: GENREC
+#+AUTHOR: QH
+#+STARTUP: noindent
+#+OPTIONS: toc:t num:t
+#+PROPERTY: header-args :exports both
+#+LATEX_CLASS_OPTIONS: [a4paper]
+#+LATEX_HEADER: \usepackage{enumitem}
+#+LATEX_HEADER: \usepackage{inconsolata} \usepackage{CJKutf8}
+#+LATEX_HEADER: \DeclareUnicodeCharacter{200B}{{\hskip 0pt}}
+#+LATEX_HEADER: \usepackage{xstring}
+#+LATEX_HEADER: \renewcommand\texttt[1]{{\tt\StrSubstitute{#1}{-}{-\allowbreak}}}
+#+LATEX_HEADER: \PassOptionsToPackage{most}{tcolorbox}
+
+#+SETUPFILE: https://fniessen.github.io/org-html-themes/org/theme-readtheorg.setup
+#+HTML_HEAD: <style> .example{margin-top:-24px;border-top:none;}</style>
+#+HTML_HEAD: <style> div{font-family:sans-serif;}</style>
+#+HTML_HEAD: <style> #content{width:calc(65ch + 8em); font-family:Consolas,"Andale Mono WT","Andale Mono","Lucida Console","Lucida Sans Typewriter","DejaVu Sans Mono","Bitstream Vera Sans Mono","Liberation Mono","Nimbus Mono L",Monaco,"Courier New",Courier,monospace;}</style>
+#+HTML_HEAD: <style> pre.src{white-space:pre-wrap;}</style>
+
+#+begin_export latex
+\DeclareTColorBox[]{Example}{o}{enhanced,skin=bicolor,colback=EfD!98!EFD, colframe=EfD!95!EFD,  fontupper=\footnotesize, fontlower=\footnotesize,  colupper=EFD, colbacklower=white}
+#+end_export
+* Introduction
+GENREC is a research project that explores stochastic synthesis techniques for general recursive programs.
+
+We are currently focusing on the problem of synthesizing language semantics from examples.
+** Getting Started
+GENREC is being developed in [[wiki:Literate_Programming][Literate Programming]] style. This Org document serves as both the implementation and the central knowledge repository for the project.
+
+To get started, you should get familiar with [[https://orgmode.org][Org Mode]] and [[wiki:Common_Lisp][Common Lisp]]. Nowadays, people recommend [[https://lispcookbook.github.io/cl-cookbook/][The Common Lisp Cookbook]], read through the sections [[https://lispcookbook.github.io/cl-cookbook/functions.html][Functions]], [[https://lispcookbook.github.io/cl-cookbook/data-structures.html][Data Structures]] and [[https://lispcookbook.github.io/cl-cookbook/macros.html][Macros and Backquote]] and you should be in good position to understand GENREC code. If you encounter some functions/special forms you don't understand, first try search in [[http://clhs.lisp.se/Front/index.htm][Common Lisp Hyper Spec]] (use Google or =M-x slime-hyperspec-lookup=) in case it's in CL standard. If that's not the case, =M-x xref-find-definitions= (usually bound to key =M-.=) will bring you to its source, and typically Lisp source code are well-documented. 
+- Tip: I highly recommend you to compile and install your own SBCL from source. See [[https://www.sbcl.org/getting.html#compile][Compiling SBCL from Source]].
+
+  This makes the source code for your whole Lisp environment (including the build system, the compiler and the VM itself!) available at runtime, and you can =M-.= into it. I'm not sure how useful this is for newbies -- but I personally find it incredible useful to trouble shoot anything wrong coming from the underlying environment, or if I want to explore and modify the Lisp environment, e.g. for performance reason.
+- A few language extensions libraries are ubiquitously used, so it's helpful to get familiar with them just like standard CL.
+  - ~bind~ macro from [[https://metabang-bind.common-lisp.dev/user-guide.html][metabang-bind]] to replace ~let~, ~let*~ etc.
+  - ~iter~ macro from [[https://iterate.common-lisp.dev/doc/Don_0027t-Loop-Iterate.html][iterate]] as a Lispier replacement of ~loop~
+  - Utility collection [[https://alexandria.common-lisp.dev/draft/alexandria.html][alexandria]] (imported via ~:use~) and [[https://github.com/ruricolist/serapeum/blob/master/REFERENCE.md][serapeum]] (with package local nickname ~s~)
+
+You can then start to explore this Org document. This Org document is supposed to be readable -- if you find anything difficult to understand, this is considered a bug! Report to someone in charge. This Org document is a valid Lisp source file at the same time due to a beautiful hack from [[https://github.com/jingtaozf/literate-lisp][literate-lisp]]. The recommended way to load GENREC with all the dependencies is to clone the Git repository to the path ~~/quicklisp/local-projects/genrec~, then ~(ql:quickload "genrec")~.
+** Synthesis Technique
+We stratify the target program to be synthesized into two parts: A fixed skeleton with holes, and a set of hole-terms that completes the skeleton. We then use stochastic search to find hole-term assignments. The skeleton can use arbitrary Lisp, plus a few macros we provided to define holes. Hole-terms use a restricted grammar so that effective stochastic search is possible.
+* Implementation
+#+begin_src lisp
+(defpackage #:genrec
+  (:use #:cl #:iter #:sb-cltl2 #:alexandria)
+  (:export #:arg-types #:accessors #:constructors #:define-adt
+           #:hole #:with-tryables #:register-tryable-function #:with-skeleton
+           #:dispatcher #:population-skeleton #:para-skeleton
+           #:solve-skeleton
+           #:list-of #:boolean #:nat #:tuple
+           #:defproblem)
+  (:shadowing-import-from #:metabang-bind #:bind)
+  (:local-nicknames (#:t #:trivia) (#:s #:serapeum)))
+(in-package #:genrec)
+#+end_src
+** Utilities
+#+begin_src lisp
+(defmacro klet (((name arglist &body cont)) &body body)
+  "Stack-allocate a continuation function during evaluation of BODY."
+  `(flet ((,name ,arglist . ,cont))
+     (declare (dynamic-extent #',name)
+              (inline ,name))
+     . ,body))
+(s:defsubst compile-lambda (expression)
+  (compile nil expression))
+#+end_src
+   
+Misc CL types:
+#+begin_src lisp
+(defun return-type (type)
+  (t:ematch type ((list 'function _ s-type) s-type)))
+(deftype mem () '(simple-array t 1))
+#+end_src
+
+We use memoization a lot so here are some macros for it. The comparison is done by ~equal~ predicate on the argument list. Currently, only simple argument list is supported (no ~&optional &rest &key~ etc.). If we ever switch to hash-consing in the future, we may re-implement this memoization macro to boost performance.
+#+begin_src lisp
+(defmacro function-memo (name &rest args)
+  `(gethash ',args (get ',name 'memo-table)))
+(defmacro define-memo-function (name args &body body)
+  (bind (((:values body decls doc) (parse-body body :documentation t)))
+    `(let ((memo-table (make-hash-table :test 'equal :synchronized t)))
+       (setf (get ',name 'memo-table) memo-table)
+       (defun ,name ,args
+         ,doc ,@decls
+         (ensure-gethash (list ,@args) memo-table (locally ,@body))))))
+#+end_src
+~function-memo~ is intended for overriding the output for some inputs. We use this to add special case for ~nat~ type to ~value-size-function~ and ~edit-distance-function~.
+
+Make =iter= macros generate type declarations to get some free performance benefit.
+#+begin_src lisp
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (setf iterate::*always-declare-variables* t))
+#+end_src
+
+*************** TODO Hash-consing
+We manipulate terms a lot. Will switching to hash-consing boost performance?
+*************** END
+** Type utilities
+Here we have a poor man's polymorphic type system:
+- A /type/ can be either a symbol (e.g. ~nat~) or a list (e.g. ~(list-of nat)~)
+- A type has some /constructors/. This is either the type's (if it's a symbol) or its =car='s (if it's a list) ~'constructors~ symbol property.
+  
+  A constructor (always a symbol) is called to make an object if it's defined to be a function, e.g. ~cons~. Otherwise, it's regarded as a constant and stand for itself, e.g. ~nil~.
+- A constructor has some /accessors/ to access its fields.
+- Given a constructor and the expected ~result-type~, ~arg-types~ compute the expected list of argument type. This allows us to do some polymorphism, e.g.
+
+  #+begin_src lisp :load no :results value verbatim
+  (arg-types 'cons '(list-of nat))
+  #+end_src
+
+  #+RESULTS:
+  : (NAT (LIST-OF NAT))
+
+These mechanisms for constructors are also used for our handling of library functions, so that e.g. ~nth~ works on ~(list-of *)~ for any ~*~.
+#+begin_src lisp
+(defun constructors (type)
+  (append (when (consp type) (constructors (car type)))
+          (when (symbolp type) (get type 'constructors))))
+(defun accessors (c) (get c 'accessors))
+(defun arg-types (f result-type)
+  (if (functionp (get f 'arg-types))
+      (funcall (get f 'arg-types) result-type)
+      (get f 'arg-types)))
+(defun (setf constructors) (new-val type)
+  (assert (symbolp type))
+  (setf (get type 'constructors) new-val))
+#+end_src
+
+A constructor is /recursive/ if one of its argument type is the same as itself. In a few cases we test and treat recursive types specially.
+*************** TODO Clarify and think about where and why we treat recursive type specially.
+*************** END
+*************** TODO Does the current practice work well for mutually recursive type?
+*************** END
+#+begin_src lisp
+(defun recursive-p (c result-type)
+  (find result-type (arg-types c result-type) :test 'equal))
+#+end_src
+
+We index library functions according to return type, so that ~generate-mutations~ can retrieve them efficiently using helper ~library-functions~. It's similar to ~constructors~. To locally add some library function, dynamically bind ~*library-table*~.
+#+begin_src lisp
+(defvar *library-table* (make-hash-table :test 'equal)
+  "Map return types to lists of library functions.")
+(defun library-functions (result-type)
+  "Return the list of library functions that returns RESULT-TYPE."
+  (append (when (consp result-type)
+            (library-functions (car result-type)))
+          (gethash type *library-table*)))
+#+end_src
+
+For a fully specialized type, each constructor should construct runtime value of distinct Common Lisp types. This is how we tell them apart. E.g.
+- For ~(list-of *)~, ~cons~ always construct object of type ~cons~ and ~nil~ always construct object of type ~(eql nil)~.
+- For ADTs defined as the union of several product (i.e. CL struct) type, each constructor construct the corresponding CL struct.
+#+begin_src lisp
+(defun constructor->cl-type (c)
+  (or (get c 'cl-type)
+      (if (function-information c)  c `(eql ,c))))
+#+end_src
+See [[Built-in Types]] for some examples of using this low level interface. If polymorphism is not needed, we recommend using ~define-adt~.
+
+When we pick initial hole-terms for a search, or construct new application in a hole-term, we need to fill in some default hole-term with a given type, if no better option is available. Default value for a type is used in ~value-size~ and ~edit-distance~. The following computes default hole-term and value:
+*************** TODO To reduce some bias, try to generate full set of non-recursive values (rather than the smallest ones).
+Update ~generate-mutations~, ~value-size~ and ~edit-distance~ accordingly, the latter two should test for non-recursive base cases rather than comparing to ~default-value~.
+*************** END
+#+begin_src lisp
+(define-memo-function min-constructor (type)
+  "The non-recursive constructor of TYPE with smallest arity."
+  (let ((cs (sort (remove-if (lambda (c) (recursive-p c type))
+                             (constructors type))
+                  #'< :key (lambda (c) (length (arg-types c type))))))
+    (unless cs
+      (error "Type ~a has no non-recursive base case!" type))
+    (car cs)))
+(define-memo-function default-term (type)
+  (let ((minc (min-constructor type)))
+    (cons minc (mapcar #'default-term (arg-types minc type)))))
+(define-memo-function default-value (type)
+  (let ((minc (min-constructor type)))
+    (if (fboundp minc)
+        (apply minc (mapcar #'default-value (arg-types minc type)))
+        minc)))
+#+end_src
+*** Convenient ADT definition
+See [[Lambda Calculus (de Brujin index)]] for an example.
+#+begin_src lisp
+(defmacro define-adt (name &body constructors)
+  `(progn
+     ,@(mapcar
+         (t:lambda-match1 (list* c args)
+           (when args
+             `(defstruct (,c (:constructor ,c ,(mapcar #'car args)))
+                ,@(mapcar #'car args))))
+         constructors)
+     (deftype ,name () '(or ,@(mapcar #'car constructors)))
+     
+     ,@(mapcar (t:lambda-match1 (list* c args)
+                  (bind ((fields (mapcar #'car args))
+                         (types (mapcar #'cadr args))
+                         (accessors
+                          (mapcar (lambda (f) (symbolicate c "-" f)) fields)))
+                    `(progn
+                       (declaim
+                        ,@(mapcar
+                           (lambda (a type) `(ftype (function (,c) ,type) ,a))
+                           accessors types))
+                       (setf (get ',c 'arg-types) ',types
+                             (get ',c 'accessors) ',accessors))))
+                constructors)
+     (setf (constructors ',name) ',(mapcar #'car constructors))))
+#+end_src
+** Hole-terms
+/Hole-terms/ are basically a first-order subset of regular lisp, with only function applications and special ~(tryable n)~ forms.
+- ~(tryable n)~ denotes the n-th tryable value.
+
+We use a simple "compiler" that translate a hole-term into an /execution procedure/ (chain of closures).
+- An execution procedure is a callable function.
+
+  When called with a single argument (the vector of tryable values), it returns the value represented by the source hole-term.
+    
+The reason we have this simple compiler is that interpreting hole-terms at evaluation time is slow, but SBCL compiler is super slow, so we can't afford to generate Lisp code and call ~compile~ for every hole-term.
+*************** TODO Explore machine code generator for hole-terms
+Maybe try SBCL's assembler ~sb-assem~
+- [[https://pvk.ca/Blog/2014/03/15/sbcl-the-ultimate-assembly-code-breadboard/][SBCL: the ultimate assembly code breadboard]]
+
+... or Clozure CL's LAP (lisp assembly program)
+
+#+begin_export latex
+\begin{CJK}{UTF8}{gbsn}
+#+end_export
+
+- 在 Clozure Common Lisp 中使用汇编 (in Chinese)
+  - [[https://xfy.vercel.app/posts/write-assembly-code-in-ccl/][编写 LAP 代码]]
+  - [[https://xfy.vercel.app/posts/debug-ccl-using-gdb/][使用 GDB 调试]]
+
+#+begin_export latex
+\end{CJK}
+#+end_export
+*************** END
+
+*** Chain of closure compiler for hole-terms
+~make-cons-procedure~ is a helper to construct execution procedures that apply a function to a list of mixed static and dynamic arguments. This remove the overhead to create and call trivial constant procedures (of the form ~(lambda (mem)~ /some-constant/ ~)~) for every constant terms. Instead, the static constants are embedded in the caller execution procedure. I deem this worthy because we have plenty of use of ~0~'s and ~nil~'s etc., but we won't ever (I think) use a large set of distinct constant.
+
+The canonical example use: ~(funcall (make-cons-procedure f '(t nil nil))~ /execution-procedure_1/ /constant_1/ /constant_2/​~)~ gives something equivalent to ~(lambda (mem) (f (funcall~ /execution-procedure_1/ ~mem)~ /constant_1/ /constant_2/​~))~, with /execution-procedure_1/ /constant_1/ and /constant_2/ closed in closures variables.
+#+begin_src lisp
+(define-memo-function make-cons-procedure (f dynamic-p-list)
+  "Partially specialize F according to DYNAMIC-P-LIST."
+  (if (fboundp f)
+      (if (or (some #'identity dynamic-p-list)
+              ;; recognize skeleton local functions
+              (not (symbol-package f)))
+          (let ((*gensym-counter* 0)
+                (args (make-gensym-list (length dynamic-p-list) "ARG-")))
+            (compile-lambda
+             `(lambda ,args
+                (lambda (mem)
+                  (declare (optimize (speed 3) #+nil (safety 0)))
+                  (,f ,@(mapcar
+                         (lambda (dynamic-p arg)
+                           (if dynamic-p
+                               `(funcall (the function ,arg) mem)
+                               arg))
+                         dynamic-p-list args))))))
+          f)
+      (constantly f)))
+#+end_src
+
+#+begin_src lisp
+(defun term->procedure (term)
+  "Convert TERM to an executable procedure."
+  (labels ((process (term)
+             (t:match term
+               ((list 'succ _)
+                (iter (for i from 1)
+                  (setq term (cadr term))
+                  (while (and (consp term) (eq (car term) 'succ)))
+                  (finally
+                   (let ((arg (process term)))
+                     (return
+                       (if (functionp arg)
+                           (named-lambda add-procedure (mem)
+                             (+ i (funcall arg mem)))
+                           (+ i arg)))))))
+               ((list 'tryable index)
+                (named-lambda tryable-procedure (mem)
+                  (svref mem index)))
+               ((list* op args)
+                (let ((args (mapcar #'process args)))
+                  (apply
+                   (make-cons-procedure op (mapcar #'functionp args))
+                   args))))))
+    (let ((result (process term)))
+      (if (functionp result) result
+          (named-lambda const-procedure (mem)
+            (declare (ignore mem))
+            result)))))
+(defun compile-par (par)
+  (map 'vector #'term->procedure par))
+#+end_src
+** Skeleton Language
+*** Resource Limit Helpers
+#+begin_src lisp
+(defvar *stack-limit*) (defvar *pc*)
+(defun call-with-resource-limit (thunk)
+  (let ((*stack-limit*
+          (- (sb-sys:%primitive sb-c:current-stack-pointer)
+             16384))
+        (*pc* 200))
+    (funcall thunk)))
+(defmacro with-resource-limit (&body body)
+  `(call-with-resource-limit (lambda () ,@body)))
+(defun check-resource-limit ()
+  (decf *pc*)
+  (unless (and (> *pc* 0)
+               (> (sb-sys:%primitive sb-c:current-stack-pointer)
+                  *stack-limit*))
+    (throw 'cost 1000.0)))
+#+end_src    
+*** Skeleton definition
+A /skeleton/ is an incomplete procedure that can be evaluated only when ~*par*~ is bound to a vector of execution procedures (to make it complete). Use ~compile-par~ to compile a sequence of hole-terms into a suitable value for ~*par*~.
+#+begin_src lisp
+(s:defvar-unbound *par* "Vector of execution procedures to complete the skeleton being evaluated.")
+(defstruct skeleton
+  (function (error "Unprovided.") :type function)
+  (printer (error "Unprovided.") :type function)
+  (holes (error "Unprovided.") :type list)
+  (type (error "Unprovided."))
+  (functions (error "Unprovided.") :type list)
+  (source))
+(defmethod print-object ((object skeleton) stream)
+  (format stream "#.~a" (skeleton-source object)))
+(defstruct hole
+  (type) (tryable-types))
+(defmethod make-load-form ((object hole) &optional env)
+  (make-load-form-saving-slots object :environment env))
+(defun print-skeleton (skeleton par)
+  (let ((*print-circle* nil)
+        (*print-gensym* nil))
+    (print (funcall (skeleton-printer skeleton) par))
+    (values)))
+#+end_src
+
+~hole~, ~with-tryables~ and ~with-skeleton~ are the main macros for defining skeletons.
+#+begin_src lisp
+(defvar *holes* (s:vect))
+(defvar *tryable-vars* nil)
+(defvar *tryable-types* nil)
+(defvar *tryable-functions* nil)
+(defmacro hole-1 (index &rest exprs)
+  `(let ((mem (vector ,@exprs)))
+     (declare (dynamic-extent mem))
+     (funcall (the function (svref *par* ,index)) mem)))
+(defmacro hole (type)
+  "A hole with TYPE.
+At evaluation time, this computes a value from `*par*' variable and the lexically defined set of tryable expressions. See `with-tryables'."
+  (prog1 `(hole-1 ,(length *holes*) ,@*tryable-vars*)
+    (vector-push-extend
+     (make-hole :type type :tryable-types *tryable-types*)
+     *holes*)))
+(defun gensym-1 (thing)
+  (gensym (coerce
+           (mapcan (lambda (c)
+                     (cond ((alpha-char-p c) (list c))
+                           ((alphanumericp c) nil)
+                           (t (list #\-))))
+                   (coerce (format nil "~a" thing) 'list))
+           'string)))
+(defmacro with-tryables (exprs-and-types &body body)
+  "EXPRS-AND-TYPES should be of the form ((EXPR TYPE) ...).
+Make EXPR tryable for `hole' forms in BODY."
+  (bind ((exprs (mapcar #'car exprs-and-types))
+         (types (mapcar #'cadr exprs-and-types))
+         (vars (mapcar #'gensym-1 types)))
+    `(let ,(mapcar #'list vars exprs)
+       (compiler-let
+           ((*tryable-vars* ',(append vars *tryable-vars*))
+            (*tryable-types* ',(append types *tryable-types*)))
+         ,@body))))
+(defun register-tryable-function (name type function)
+  "Register tryable function at code generation time."
+  (t:ematch type
+    ((list 'function arg-types return-type)
+     (setf (fdefinition name) function)
+     (setf (get name 'return-type) return-type)
+     (setf (get name 'arg-types) arg-types)
+     (push name *tryable-functions*)
+     function)))
+(defun add-library-function (name return-type)
+  "Add library function to `*library-table*' at evaluation time."
+  (push name (gethash return-type *library-table*)))
+(defmacro with-skeleton (&whole source (type) &body body)
+  (let ((holes (s:vect)))
+    `(compiler-let ((*holes* ,holes))
+       (let (*tryable-functions*)
+         (make-skeleton :function (progn ,@body)
+                    :holes ,(map 'list #'identity holes)
+                    :type ',type
+                    :functions (nreverse *tryable-functions*)
+                    :printer (lambda () (error "Unimplemented"))
+                    :source ',source)))))
+#+end_src
+** Skeleton Generators
+Skeleton generators are written as macros. By convention, we use ~compiler-let~ to pass down expected output type via ~*output-type*~, so that skeleton generator macros can do return-type polymorphism. Each skeleton generator macro should also do so for their sub-forms.
+#+begin_src lisp
+(defvar *output-type* nil "Intended output type for current macro at code generation time.")
+#+end_src
+*** Code Generator Debugging
+It is very convenient to debug these code generators, such as ~population-skeleton~, with SLIME macrostepper.
+ - To use the macrostepper, install Emacs package [[https://melpa.org/#/macrostep][~macrostep~]] and SLIME will integrate its macroexpander into it (if not, try restart SLIME or Emacs). Then ~M-x macrostep-expand~ on the macro form you want to expand.
+
+Notes:
+- INDEX for ~hole-1~ forms are always 0 when expanded using ~slime-macrostep~. Don't worry! They are expanded to correct values by SBCL evaluator.
+
+To examine INDEX of holes in the parameter sequence, (e.g. when manually crafting a parameter sequence to test a skeleton), the following helper ~macroexpand-some~ let us correctly (more so than =slime-macrostep=!) expand some macros but retain the rest. We can use it to expand code generator macros and ~hole~ forms, but don't expand everything into a low-level unreadable mess.
+
+~macroexpand-some~ uses a clever hack inspired by =slime-macrostep=. Note that it's not suffice to call [[http://clhs.lisp.se/Body/f_mexp_.htm][~macroexpand~]] until we reach a form we don't want to expand -- the arguments of that form might still contain interesting macro forms, but it's not possible to tell whether they are in evaluated positions without extensive analysis. Instead, we use built-in ~macroexpand-all~ to expand the original form fully, and in the meantime, use [[http://clhs.lisp.se/Body/v_mexp_h.htm][~*macroexpand-hook*~]] to selectively collect interesting substitutions. We then apply these substitutions ourselves to the original form until fixed-point.
+#+begin_src lisp
+(defun macroexpand-some (form predicate &optional env)
+  "Expand all macro forms in FORM which satisfies PREDICATE."
+  (bind ((expansion-alist)
+         (*macroexpand-hook*
+          (lambda (macro-function form env)
+            (let ((collect-p (funcall predicate form))
+                  (result (funcall macro-function form env)))
+              (when collect-p
+                (push (cons form result) expansion-alist))
+              result))))
+    (macroexpand-all form env)
+    (tagbody
+     begin
+       (let ((old-form form))
+         (setq form (sublis expansion-alist form))
+         (unless (equal form old-form)
+           (go begin))))
+    form))
+#+end_src
+
+*** Single-dispatch function population
+A set of mutually recursive function, each dispatching on their first argument.
+#+begin_src lisp
+(defmacro dispatch-1 (dispatch-value dispatch-type &body clauses)
+  "Single dispatch on DISPATCH-VALUE and make its field members tryable.
+CLAUSES should be of the form ((constructor body...)....)"
+  (once-only (dispatch-value)
+    `(etypecase ,dispatch-value
+       ,@(mapcar (t:lambda-ematch1 (list* c body)
+                   `(,(constructor->cl-type c)
+                     (with-tryables
+                         ,(mapcar (lambda (accessor field-type)
+                                    `((,accessor ,dispatch-value) ,field-type))
+                                  (accessors c) (arg-types c dispatch-type))
+                       ,@body)))
+          clauses))))
+(defmacro population-skeleton (&rest types)
+  (bind ((main-type (lastcar types))
+         (function-names (make-gensym-list (length types) "F")))
+    `(with-skeleton (,main-type)
+       (labels ,(mapcar
+                 (lambda (type f)
+                   (bind (((_ input-types output-type) type)
+                          (args (mapcar #'gensym-1 input-types))
+                          (dispatch-type (car input-types)))
+                     `(,f ,args
+                          (check-resource-limit)
+                          (with-tryables
+                              ,(mapcar #'list args input-types)
+                            (dispatch-1
+                             ,(car args) ,dispatch-type
+                             ,@(mapcar (lambda (c)
+                                          `(,c (with-tryables
+                                                   ,(when (recursive-p c dispatch-type)
+                                                      (mapcar
+                                                       (lambda (type f)
+                                                         (bind (((_ input-types output-type) type))
+                                                           `((,f ,@(mapcar (lambda (type) `(hole ,type)) input-types)) ,output-type)))
+                                                              types function-names))
+                                                 (with-tryables
+                                                     ,(when (recursive-p c dispatch-type)
+                                                        (mapcar
+                                                         (lambda (type f)
+                                                           (bind (((_ input-types output-type) type))
+                                                             `((,f ,@(mapcar (lambda (type) `(hole ,type)) input-types)) ,output-type)))
+                                                                types function-names))
+                                                   (hole ,output-type)))))
+                                        (constructors dispatch-type)))))))
+                 types function-names)
+         #',(lastcar function-names)))))
+#+end_src
+
+**** COMMENT deprecated
+#+begin_src lisp :load no
+(defmacro dispatcher (&optional (name (gensym "DISPATCHER") ))
+  "Generate code for a single dispatch function.
+The generated code does not add the function into tryable expressions.
+To support recursion, the user of this generator should register the
+generated function via `register-tryable-function'."
+  (bind (((_ input-types output-type) *output-type*)
+         (vars (mapcar #'gensym-1 input-types))
+         (dispatch-type (car input-types))
+         (dispatch-var (car vars)))
+    `(named-lambda ,name ,vars
+       (check-resource-limit)
+       (with-tryables
+           ,(mapcar #'list vars input-types)
+         (compiler-let ((*output-type* ',output-type))
+           (dispatch-1 ,dispatch-var ,dispatch-type
+                       ,@(mapcar (lambda (c) `(,c (hole ,output-type)))
+                                 (constructors dispatch-type))))))))
+(defmacro population-skeleton (&rest types)
+  (bind ((main-type (lastcar types))
+         (function-names (mapcar (lambda (type) (declare (ignore type)) (gensym "F")) types)))
+    `(with-skeleton (,main-type)
+       ,@(mapcar
+          (lambda (type name)
+            `(register-tryable-function
+              ',name ',type
+              (compiler-let ((*output-type* ',type))
+                (dispatcher ,name))))
+          types function-names))))
+#+end_src
+*** Paramorphism
+Properly-nested [[wiki:paramorphism][paramorphism]].
+#+begin_src lisp
+(defmacro para (dispatch-value dispatch-type &rest clauses)
+  `(labels ((process (dispatch-value)
+              (check-resource-limit)
+              (dispatch-1 dispatch-value ,dispatch-type
+                ,@(mapcar
+                   (t:lambda-ematch1 (list* c body)
+                     `(,c
+                       (with-tryables
+                           ,(s:filter-map
+                             (lambda (a field-type)
+                               (when (equal field-type dispatch-type)
+                                 `((process (,a dispatch-value))
+                                   ,dispatch-type)))
+                             (accessors c)
+                             (arg-types c dispatch-type))
+                         ,@body)))
+                   clauses))))
+     (process ,dispatch-value)))
+(defmacro properly-nested-para (&rest dispatch-types)
+  (t:match dispatch-types
+    ((cons type rest)
+     `(para (hole ,type) ,type
+            ,@(mapcar
+               (lambda (c)
+                 `(,c
+                   ,(if (recursive-p c type)
+                        `(properly-nested-para ,@rest)
+                        `(hole ,*output-type*))))
+               (constructors type))))
+    (nil `(hole ,*output-type*))))
+(defmacro para-skeleton (function-type &rest dispatch-types)
+  (bind (((_ input-types output-type) function-type)
+         (args (mapcar #'gensym-1 input-types)))
+    `(with-skeleton (,function-type)
+       (lambda ,args
+         (with-tryables ,(mapcar #'list args input-types)
+           (compiler-let ((*output-type* ',output-type))
+             (properly-nested-para ,@dispatch-types)))))))
+#+end_src
+
+#+begin_src lisp :load no :results output code
+(macroexpand-some
+ '(para-skeleton (function (nat nat) nat) nat nat nat)
+ (lambda (form) (member (car form) '(para-skeleton properly-nested-para))))
+#+end_src
+
+#+RESULTS:
+#+begin_src lisp
+
+(WITH-SKELETON ((FUNCTION (NAT NAT) NAT))
+  (LAMBDA (#:NAT879 #:NAT880)
+    (WITH-TRYABLES ((#:NAT879 NAT) (#:NAT880 NAT))
+      (COMPILER-LET ((*OUTPUT-TYPE* 'NAT))
+                    (PARA (HOLE NAT) NAT (ZERO (HOLE NAT))
+                          (SUCC
+                           (PARA (HOLE NAT) NAT (ZERO (HOLE NAT))
+                                 (SUCC
+                                  (PARA (HOLE NAT) NAT (ZERO (HOLE NAT))
+                                        (SUCC (HOLE NAT)))))))))))
+#+end_src
+
+** Search operators
+We use quite a bit of nondeterministic programming via continuation-passing style. Our convention:
+- A /non-deterministic/ function is a function that accept a /continuation/ as its first argument. It "return" values by calling this continuation.
+
+  The function can return multiple times via multiple calls to its continuation.
+- It's recommended to use ~klet~ to stack allocate continuations.
+
+#+begin_src lisp
+(defun map-one (cont f list &rest lists)
+  "Call non-deterministic function F with each element of LIST (and corresponding elements of LISTS).
+Return the results of replacing each element of LIST of F's return value."
+  (declare (type function cont))
+  (when list
+    (klet ((cont (r) (funcall cont (cons r (cdr list)))))
+      (apply f #'cont (car list) (mapcar #'car lists)))
+    (klet ((cont (r) (funcall cont (cons (car list) r))))
+      (apply #'map-one #'cont f (cdr list) (mapcar #'cdr lists)))))
+#+end_src
+
+#+begin_src lisp :load no :results output
+(map-one #'print (lambda (k r) (funcall k (1+ r))) '(1 2 3))
+#+end_src
+
+#+RESULTS:
+: 
+: (2 2 3) 
+: (1 3 3) 
+: (1 2 4) 
+
+#+begin_src lisp :load no :results output
+(map-one #'print (lambda (k r y) (funcall k (list r y))) '(1 2 3) '(a b c))
+#+end_src
+
+#+RESULTS:
+: 
+: ((1 A) 2 3) 
+: (1 (2 B) 3) 
+: (1 2 (3 C)) 
+
+We apply the following rewrites recursively to every subterm in a given term:
+- Construction :: Find a constructor/library function whose return type is the type of current subterm, fill in arguments using ~default-term~ or the current subterm.
+- Variable :: Replace the current subterm with a tryable value of the same type.
+- Projection :: If the current subterm is an application, replace the current subterm with one of its argument of the same type, if any.
+#+begin_src lisp
+(defun generate-mutations (cont term hole)
+  "Generate mutations of TERM for a given HOLE."
+  (declare (type function cont))
+  (labels ((process (cont term type)
+             ;; Construction
+             (mapc
+              (lambda (f)
+                (let ((args (mapcar
+                             (lambda (arg-type)
+                               (if (equal arg-type type)
+                                   term
+                                   (default-term arg-type)))
+                             (arg-types f type))))
+                  (funcall cont (cons f args))))
+              (library-functions type))
+             ;; Variable
+             (iter (for tryable-type in (hole-tryable-types hole))
+               (for i from 0)
+               (when (equal tryable-type type)
+                 (funcall cont `(tryable ,i))))
+             (t:match term
+               ((list 'tryable _))
+               ((list* op args)
+                ;; Projection
+                (mapc
+                 (lambda (arg arg-type)
+                   (when (equal arg-type type)
+                     (funcall cont arg)))
+                 args (arg-types op type))
+                ;; Subterms
+                (map-one cont #'process args (arg-types op type))))))
+    (process cont term (hole-type hole))))
+#+end_src
+
+#+begin_src lisp :load no :results output
+(let ((*library-table* (make-hash-table :test 'equal)))
+  (add-library-function 'cons 'list-of)
+  (add-library-function 'nil 'list-of)
+  (add-library-function 'succ 'nat)
+  (add-library-function 'zero 'nat)
+  
+  (generate-mutations
+   #'print '(cons (zero) (nil))
+   (make-hole :type '(list-of nat)
+              :tryable-types '(nat nat (list-of nat)))))
+#+end_src
+
+#+RESULTS:
+#+begin_example
+(NIL) 
+(CONS (ZERO) (CONS (ZERO) (NIL))) 
+(TRYABLE 2) 
+(NIL) 
+((ZERO) (NIL)) 
+((SUCC (ZERO)) (NIL)) 
+((TRYABLE 0) (NIL)) 
+((TRYABLE 1) (NIL)) 
+((ZERO) (NIL)) 
+((ZERO) (CONS (ZERO) (NIL))) 
+((ZERO) (TRYABLE 2)) 
+#+end_example
+
+Note that ~generate-mutations~ may return duplicated terms. Caller is advised to perform a cleanup (e.g. using [[http://clhs.lisp.se/Body/f_rm_dup.htm][delete-duplicates]]).
+
+We compile specialized versions of ~value-size-function~ and ~edit-distance-function~ for each type, because they have a big impact on performance. At runtime, ~edit-distance-function~ uses ~*edit-distance-memo*~ table to perform Dynamic Programming calculation of edit distance. The size of the table and any resizing will affect performance, so you should keep it as small as possible.
+#+begin_src lisp
+(defun term-size (term)
+  (if (consp term) (reduce #'+ term :key #'term-size) 1))
+(progn
+  (define-memo-function value-size-function (type)
+    (compile-lambda
+     `(lambda (value)
+        (labels ((process (value)
+                   (etypecase value
+                     ,@(mapcar
+                        (lambda (c)
+                          `(,(constructor->cl-type c)
+                            (+ ,(if (eq c (min-constructor type)) 0 1)
+                               ,@(mapcar
+                                  (lambda (accessor arg-type)
+                                    (if (equal arg-type type)
+                                        `(process (,accessor value))
+                                        `(value-size ',arg-type
+                                                     (,accessor value))))
+                                  (accessors c)
+                                  (arg-types c type)))))
+                        (constructors type)))))
+          (process value)))))
+  (setf (function-memo value-size-function nat) #'abs))
+(defun value-size (type value)
+  (funcall (value-size-function type) value))
+(defun make-edit-distance-memo ()
+  (make-hash-table
+   :test (lambda (x y)
+           (and (eq (car x) (car y))
+                (eq (cdr x) (cdr y))))
+   :hash-function
+   (lambda (x)
+     (logxor (sb-impl::eq-hash (car x))
+             (sb-impl::eq-hash (cdr x))))))
+(defvar *edit-distance-memo* (make-edit-distance-memo)
+  "Memoization table for edit distance calculation using dynamic programming.
+Maps (X . Y) to the (EDIT-DISTANCE TYPE X Y), where TYPE is reasonable (is this ok?).
+It should be CLRHASH-ed regularly to avoid growth in size for performance reason.")
+(progn
+  (define-memo-function edit-distance-function (type)
+    (compile-lambda
+     `(lambda (value-1 value-2)
+        (labels ((one-side (value-1 value-2)
+                   (etypecase value-1
+                     ,@(mapcar
+                        (lambda (c)
+                          `(,(constructor->cl-type c)
+                            ,(if (recursive-p c type)
+                                 `(min ,@
+                                   (s:filter-map
+                                    (lambda (accessor arg-type)
+                                      (when (equal arg-type type)
+                                        `(1+ (process (,accessor value-1)
+                                                      value-2))))
+                                    (accessors c)
+                                    (arg-types c type)))
+                                 `(+ (if (equal value-1 ',(default-value type))
+                                         0 1)
+                                     (value-size ',type value-2)))))
+                        (constructors type))))
+                 (process (value-1 value-2)
+                   (ensure-gethash
+                    (cons value-1 value-2) *edit-distance-memo*
+                    (min
+                     (one-side value-1 value-2)
+                     (one-side value-2 value-1)
+                     (etypecase value-1
+                       ,@(mapcar
+                          (lambda (c)
+                            `(,(constructor->cl-type c)
+                              (if (typep value-2 ',(constructor->cl-type c))
+                                  (+ ,@
+                                   (mapcar
+                                    (lambda (accessor arg-type)
+                                      (if (equal arg-type type)
+                                          `(process (,accessor value-1)
+                                                    (,accessor value-2))
+                                          `(edit-distance ',arg-type
+                                                          (,accessor value-1)
+                                                          (,accessor value-2))))
+                                    (accessors c)
+                                    (arg-types c type)))
+                                  1000)))
+                          (constructors type)))))))
+          (process value-1 value-2)))))
+  (setf (function-memo edit-distance-function nat)
+        (lambda (x y) (abs (- x y)))))
+(defun edit-distance (type value-1 value-2)
+  (funcall (edit-distance-function type) value-1 value-2))
+#+end_src
+** Search algorithm
+#+begin_src lisp
+(locally
+    (declare (optimize (speed 3)))
+  (s:defsubst fastlog2 (p)
+    "Compute log2(P) approximately for *positive* integer P."
+    (declare (type fixnum p))
+    (let* ((exponent (1- (integer-length p)))
+           (x (scale-float (coerce p 'single-float) (- exponent))))
+      (declare (type single-float x))
+      (+ exponent (- (* -0.4326728 x (- x 5.261706)) 1.8439242))))
+  (defun accept-p (cost-2 cost-1 beta)
+    (declare (type single-float cost-2 cost-1 beta))
+    (or (< cost-2 cost-1)
+        (< (+ (fastlog2 (1+ (random 1000))) (* beta (- cost-2 cost-1)))
+           (fastlog2 (1+ 1000))))))
+
+(defun stop-tasks ()
+  (sleep 0.1) ;; avoid some race conditions
+  (iter (for worker in-vector (lparallel.kernel::workers lparallel:*kernel*))
+    (for thread = (lparallel.kernel::thread worker))
+    (sb-thread:interrupt-thread
+     thread
+     (lambda () (ignore-errors (throw 'random-search nil))))))
+(defun random-search
+    (par mutate cost &key (beta 5.0) (restart 10000) (timeout 100.0))
+  (let ((timeout timeout)
+        (i 0)
+        (initial-cost (funcall cost par)))
+    (let ((*edit-distance-memo* (make-edit-distance-memo))
+          (start-time (get-internal-real-time))
+          (my-timeout timeout)
+          (candidates (s:vect))
+          (candidate-costs (make-array 0 :adjustable t))
+          (par-1 par)
+          (cost-1 initial-cost)
+          (n 0))
+      (handler-case
+          (sb-ext:with-timeout my-timeout
+            (catch 'random-search
+              (iter #+nil (for _ below restart)
+                (while (< n restart))
+                (incf n)
+                (setf (fill-pointer candidates) 0)
+                (klet ((cont (par-2)
+                         (vector-push-extend par-2 candidates)))
+                  (funcall mutate #'cont par-1))
+                (setq candidates (delete-duplicates candidates :test #'equalp))
+                (adjust-array candidate-costs (length candidates)
+                              :initial-element nil)
+                (iter (for i index-of-vector candidate-costs)
+                  (setf (aref candidate-costs i) nil))
+                (iter (for j from (* (length candidates) 4) by -1)
+                  (for choice = (random (length candidates)))
+                  (for candidate = (aref candidates choice))
+                  (for cost-2 = (s:ensure (aref candidate-costs choice)
+                                  (funcall cost candidate)))
+                  (unless (> j 0)
+                    (log:info "All candidates are bad, search interrupted.")
+                    (throw 'random-search nil))
+                  (when (accept-p cost-2 cost-1 beta)
+                    (return (psetf cost-1 cost-2 par-1 candidate))))
+                (finally
+                 (setq timeout
+                       (/ (+ (* i timeout)
+                             (/ (- (get-internal-real-time) start-time)
+                                internal-time-units-per-second))
+                          (1+ i)))
+                 (incf i)))
+              (print (list par-1 cost-1))
+              nil))
+        (sb-ext:timeout ()
+          (setq timeout (* my-timeout 1.5))
+          nil)))))
+(defun skeleton-cost (skeleton examples par)
+  (let ((cost-error
+          (catch 'cost
+            (let ((*par* (compile-par par)))
+              (iter (for (input output) in examples)
+                (for output-1 =
+                     (with-resource-limit
+                       (apply (skeleton-function skeleton) input)))
+                (clrhash *edit-distance-memo*)
+                (sum (fastlog2
+                      (the fixnum
+                           (1+ (edit-distance
+                                (return-type (skeleton-type skeleton))
+                                output output-1)))))))))
+        (cost-norm (fastlog2
+                    (the fixnum
+                         (1+ (reduce #'+ par :key #'term-size))))))
+    (values cost-error cost-norm)))
+(defun solve-skeleton (skeleton examples library-functions)
+  (let ((*library-table* (make-hash-table :test 'equal)))
+    (labels ((mutate (cont par)
+               (map-one cont #'generate-mutations
+                        par (skeleton-holes skeleton)))
+             (cost (par)
+               (bind (((:values cost-error cost-norm)
+                       (skeleton-cost skeleton examples par)))
+                 #+nil (print (list par cost-error cost-norm))
+                 (when (zerop cost-error)
+                   (throw 'random-search par))
+                 (+ cost-error cost-norm))))
+      (mapc
+       (lambda (f) (add-library-function f (get f 'return-type)))
+       (skeleton-functions skeleton))
+      (mapc
+       (lambda (entry) (apply #'add-library-function entry))
+       library-functions)
+      (random-search
+       (mapcar (compose #'default-term #'hole-type) (skeleton-holes skeleton))
+       #'mutate #'cost))))
+#+end_src
+*** COMMENT todo
+#+begin_src lisp :load no
+(defun solve-skeletons (skeletons examples)
+  (setq *pc* 0)
+  (let ((tasks (make-hash-table)))
+    (iter (for skeleton in skeletons)
+      (setf (gethash (skeleton-task skeleton examples) tasks) skeleton))
+    (unwind-protect
+         (let ((channel (lparallel:make-channel)))
+           (iter (for _ below (ceiling (lparallel:kernel-worker-count) (hash-table-count tasks)))
+             (iter (for (task _) in-hashtable tasks)
+               (lparallel:submit-task channel task)))
+           (iter
+             (for (task par) = (lparallel:receive-result channel))
+             (when par (return (list (gethash task tasks) par)))
+             (lparallel:submit-task channel task)))
+      (stop-tasks))))
+#+end_src
+** Profiling
+#+begin_src lisp
+(defun call-with-advices (names advices thunk)
+  (mapcar
+   (lambda (name advice)
+     (sb-int:encapsulate name 'profiling advice))
+   names advices)
+  (unwind-protect (funcall thunk)
+    (mapcar
+     (lambda (name) (sb-int:unencapsulate name 'profiling))
+     names)))
+(defmacro with-advices (name-and-advices &body body)
+  `(call-with-advices
+    ',(mapcar #'car name-and-advices)
+    (list ,@(mapcar #'cadr name-and-advices))
+    (lambda () ,@body)))
+(defun call-with-profiling (thunk)
+  (let ((evaluation-errors 0)
+        (programs 0)
+        (accepted-programs 0)
+        (time-start (get-internal-real-time)))
+    (log:info "Profiling started")
+    (unwind-protect
+         (with-advices
+             ((check-resource-limit
+               (lambda (orig)
+                 (let (success-p)
+                   (unwind-protect
+                        (prog1 (funcall orig)
+                          (setq success-p t))
+                     (unless success-p
+                       (incf evaluation-errors))))))
+              (skeleton-cost
+               (lambda (orig &rest args)
+                 (incf programs)
+                 (apply orig args)))
+              (accept-p
+               (lambda (orig &rest args)
+                 (when (apply orig args)
+                   (incf accepted-programs)
+                   t))))
+           (funcall thunk))
+      (let ((time (/ (- (get-internal-real-time) time-start)
+                     internal-time-units-per-second)))
+        (log:info "Profiling ended. ~a programs, ~a accepted, ~a evaluation errors, ~,3f s real time, ~,1f p/s."
+                  programs accepted-programs evaluation-errors
+                  time (/ programs time))))))
+(defmacro with-profiling (&body body)
+  `(call-with-profiling (lambda () ,@body)))
+#+end_src
+   
+** Test Generation
+#+begin_src lisp
+(defun sample (type)
+  (let ((op (nth (random (length (constructors type)))
+                 (constructors type))))
+    (if (fboundp op)
+        (apply op (mapcar #'sample (arg-types op type)))
+        op)))
+(defun samples (type n &optional (size 50))
+  (let (results)
+    (iter (while (< (length results) n))
+      (let ((sample (sample type)))
+        (when (< (value-size type sample) size)
+          (pushnew sample results :test #'equal))))
+    (sort results #'< :key (value-size-function type))))
+(defun generate-examples
+    (symbol n &optional (output-size (get symbol :output-size 200)))
+  (bind (((:plist type) (symbol-plist symbol))
+         ((_ argument-types result-type) type)
+         (argument-type `(tuple ,@argument-types)))
+    (let (results)
+      (iter (for _ below 1000)
+        (while (< (length results) n))
+        (bind ((inputs (sample argument-type)))
+          (when (< (value-size argument-type inputs) 30)
+            (bind ((output (apply symbol inputs)))
+              (when (< (value-size result-type output) output-size)
+                (pushnew (list inputs output) results :test #'equal))))))
+      (sort results #'<
+            :key (lambda (r) (value-size argument-type (car r)))))))
+(defun test-solution (tests skeleton par)
+  (handler-case
+      (sb-ext:with-timeout 1
+        (iter (for (inputs output) in tests)
+          (accumulate
+           (equal (apply #'call-skeleton skeleton par inputs)
+                  output)
+           by #'and initial-value t)))
+    (t ())))
+#+end_src
+   
+** Built-in Types
+Although weak in theoretical sense, our type facility allow us to easily exploit efficient representations besides standard ADT representation (tagged union implemented by CL struct).
+#+begin_src lisp
+(deftype list-of (element-type) (declare (ignore element-type)) t)
+(deftype nat () '(and fixnum (integer 0)))
+#+end_src
+
+We use native Lisp conses to represent ~list-of *~.
+#+begin_src lisp
+(setf (constructors 'list-of) '(cons nil)
+      (get 'cons 'arg-types) (t:lambda-ematch1 (list 'list-of x)
+                               `(,x (list-of ,x)))
+      (get 'cons 'accessors) '(car cdr)
+
+      (get 'nil 'arg-types) nil
+      (get 'nil 'accessors) nil
+      (get 'nil 'cl-type) 'null)
+#+end_src
+
+We use machine numbers rather than unary ADT representation to represent ~nat~. Huge performance gain!
+#+begin_src lisp
+(defun succ (x) (1+ x))
+(defun zero () 0)
+
+(setf (constructors 'nat) '(zero succ)
+      (get 'zero 'arg-types) nil
+      (get 'zero 'accessors) nil
+      (get 'zero 'cl-type) '(integer 0 0)
+      (get 'succ 'arg-types) '(nat)
+      (get 'succ 'accessors) '(1-)
+      (get 'succ 'cl-type) '(and fixnum (integer 1)))
+#+end_src
+
+Tuple type. Currently support up to 16 fields.
+#+begin_src lisp
+(setf (constructors 'tuple) '(list)
+      (get 'list 'arg-types) (t:lambda-ematch1 (list* 'tuple arg-types)
+                               arg-types)
+      (get 'list 'accessors) (map-iota
+                              (lambda (i) `(lambda (x) (nth ,i x)))
+                              16))
+#+end_src
+
+We could have defined ~boolean~ with ~define-adt~, but ~boolean~ is a symbol from standard CL and ~define-adt~ expands into a somewhat problematic redefinition ~(deftype boolean ...)~ (which triggers [[https://www.sbcl.org/manual/#Package-Locks][Package Locks]] on SBCL). Therefore, we use the low level interface.
+#+begin_src lisp
+(setf (constructors 'boolean) '(nil t)
+      (get 't 'arg-types) nil)
+#+end_src
+** Convenience
+#+begin_src lisp
+(defun call-skeleton (skeleton par &rest args)
+  (with-resource-limit
+    (let ((*par* (compile-par par)))
+      (apply (skeleton-function skeleton) args))))
+(defun skeleton-label (skeleton n) (nth n (skeleton-functions skeleton)))
+(defvar *problems* nil)
+(defmacro defproblem (name argument-types result-type args &body body)
+  `(progn
+     (export '(,name))
+     (pushnew ',name *problems*)
+     (setf (get ',name :type) '(function ,argument-types ,result-type))
+     (defun ,name ,args ,@body)))
+#+end_src
+* Experiments
+#+begin_src lisp
+(defpackage #:genrec/experiments
+  (:use #:cl #:genrec))
+(in-package #:genrec/experiments)
+#+end_src
+** Natural Numbers
+** Lambda Calculus (de Brujin index)
+#+begin_src lisp
+(define-adt lc
+  (var (index nat))
+  (lam (body lc))
+  (app (op lc) (arg lc)))
+(define-adt lcv
+  (clo (env (list-of lcv)) (body lc))
+  (bot))
+#+end_src
+* Emacs Support
+** Notes
+~literate-lisp~ with ~poly-org~ is super cool, but as of time of writing (<2023-02-06 Mon>) they're still a bit buggy.
+- Manually entering =#+begin_src= and =#+end_src= (e.g. to split a source block into two) may break ~poly-org~.
+  To be safe, use shortcut =< s TAB= to make a new source block and copy code into it.
+- Sometimes ~poly-org~ does not fontify correctly, and =s-u= (~revert-buffer~) won't save it.
+  ~kill-buffer~ then reopen usually fixes it. Also, ~s-u~ work differently when inside/outside a code block.
+
+Various ~org~ niceties interact with ~poly-org~ setup nicely or badly. Here are some tested:
+#+ATTR_HTML: :style list-style:none
+#+ATTR_LATEX: :options [label={}]
+- \check =visual-line-mode=
+- \check =org-variable-pitch-minor-mode=
+- \times =org-appear-mode= does not re-fontify when cursor move out of revealed element.
+- \check =org-superstar-mode=
+- \times =org-indent-mode= breaks fontification (syntax highlighting) in code blocks.
+  Workaround: run =M-x org-indent-indent-buffer= manually
+- \check ~(setq org-pretty-entities t)~
+- \circ ~lsp-mode~ (I would like to use ~lsp-ltex~)
+  Running ~lsp~ or ~lsp-deferred~ in buffer init hook makes it unusable (cursor jump to end of buffer after every change). However, openning the buffer without ~lsp~ then ~M-x lsp~ seems to work fine.
+- \times ~topsy-mode~
+** COMMENT Custom Export Filters
+If you'd like to render result-quality HTML or PDF, run the following or add them to your ~init.el~.
+~genrec-export-filter-parse-tree-function~ does the following
+- Scan for code blocks followed by result blocks, and add \LaTeX{} wrappers to group them in one ~tcolorbox~ environment.
+#+begin_src emacs-lisp
+(require 'cl)
+(require 'org-element)
+(defun genrec-export-filter-parse-tree-function (data b c)
+  (when (eq b 'latex)
+    (org-element-map data '(src-block)
+      (lambda (src)
+        (let* ((parent (org-element-property :parent src))
+               (siblings (org-element-contents parent))
+               (pos (cl-position src siblings))
+               (next (nth (1+ pos) siblings)))
+          (cl-flet ((make-latex (v)
+                      (org-element-create 'latex-fragment
+                                          (list :value v :parent parent))))
+            (when (org-element-property :results next)
+              (apply #'org-element-set-contents
+                     parent
+                     (append
+                      (cl-subseq siblings 0 pos)
+                      (list
+                       (make-latex
+                        "\\begin{Example}[]\\renewenvironment{Code}[1][]{}{}")
+                       src
+                       (make-latex
+                        "\\tcblower\\renewenvironment{Code}[1][]{}{}")
+                       next
+                       (make-latex
+                        "\\end{Example}"))
+                      (cl-subseq siblings (+ pos 2))))))
+          src))))
+  data)
+(add-hook 'org-export-filter-parse-tree-functions #'genrec-export-filter-parse-tree-function)
+#+end_src
+** COMMENT Configurations
+Disable leading indentation to ensure ~beginning-of-defun~ and ~end-of-defun~ works properly. This ensures important SLIME functions (e.g. ~slime-compile-defun~) work properly.
+
+# Local Variables:
+# org-edit-src-content-indentation: 0
+# org-adapt-indentation: nil
+# org-export-use-babel: nil
+# org-link-abbrev-alist: (("wiki" . "https://en.wikipedia.org/wiki/"))
+# org-html-htmlize-output-type: css
+# End:
