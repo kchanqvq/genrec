@@ -1,6 +1,6 @@
 (asdf:defsystem genrec
   :defsystem-depends-on ("literate-lisp")
-  :depends-on (:serapeum :metabang-bind :trivia :alexandria :lparallel :log4cl)
+  :depends-on (:serapeum :metabang-bind :trivia :alexandria :lparallel :log4cl :luckless)
   :components ((:org "genrec")))
 #+(and sbcl swank)
 (in-package #:swank/source-path-parser)
