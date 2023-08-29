@@ -379,6 +379,9 @@ The canonical example use: ~(funcall (make-cons-procedure f '(t nil nil))~ /exec
 
 We represent parameter sequences as lists of hole-terms for easier manipulation (useful for computing mutations) and as simple vectors for efficient execution (useful for plugging into skeletons and evaluating the resulting candidate programs). The following compiles the former representation into the latter.
 #+begin_src lisp
+(defsubst compound-term-p (term)
+  "Return `t' if `term' is an application."
+  (and (consp term) (not (eq (car term) 'tryable))))
 (defun term->procedure (term)
   "Convert `term' to an execution procedure."
   (labels ((process (term)
@@ -720,10 +723,10 @@ A set of mutually recursive function, each dispatching on their first argument.
                                  (lambda (c)
                                    `(,c
                                      (with-tryable-applications
-                                         #+nil ,(reverse (mapcar #'list
+                                         ,(reverse (mapcar #'list
                                                            (append function-names function-names)
                                                            (append types types)))
-                                       ,(reverse (mapcar #'list function-names types))
+                                       #+nil ,(reverse (mapcar #'list function-names types))
                                        (hole ,output-type))))
                                  (constructors dispatch-type)))))))
                  function-names types)
@@ -874,7 +877,33 @@ It turns out currently =map-one= is only called in two places, both with a const
 : 
 : ((1 A) 2 3) 
 : (1 (2 B) 3) 
-: (1 2 (3 C)) 
+: (1 2 (3 C))
+
+#+begin_src lisp
+(defmacro one-value (&body body)
+  `(let (%result)
+     (iter
+       (while
+        (catch 'fail
+          (setf %result (progn ,@body))
+          nil)))
+     %result))
+(defmacro fail () `(throw 'fail t))
+(defmacro choice (&body clauses)
+  (let ((norm (apply #'+ (mapcar #'car clauses)))
+        (cdf 0.0))
+    `(let ((%random-choice (random ,norm)))
+       (cond ,@ (iter (for (prob . body) in clauses)
+                  (for i from 0)
+                  (incf cdf prob)
+                  (collect `((< %random-choice ,cdf) ,@body)))
+                (t (error "This is impossible."))))))
+(defun choose-list (list)
+  (if list
+      (let ((i (random (length list))))
+        (values (nth i list) i))
+      (fail)))
+#+end_src
 *** Generate mutations
 We apply the following rewrites recursively to every subterm in a given term:
 - Construction :: Find a constructor/library function whose return type is the type of current subterm, fill in arguments using ~default-term~ or the current subterm.
@@ -882,80 +911,62 @@ We apply the following rewrites recursively to every subterm in a given term:
 - Projection :: If the current subterm is an application, replace the current subterm with one of its argument of the same type, if any.
 
 #+begin_src lisp :load no
-(defun generate-mutations (cont term hole)
-  "Generate mutations of `term' for a given `hole'."
-  (declare (optimize (speed 3) (safety 0)))
-  (labels ((process (cont term type)
-             (declare (type function cont))
-             ;; Construction
-             (mapc
-              (lambda (f)
-                (let ((args (mapcar
-                             (lambda (arg-type)
-                               (if (equal arg-type type)
-                                   term
-                                   (default-term arg-type)))
-                             (arg-types f type))))
-                  (funcall cont (cons f args))))
-              (library-functions type))
-             ;; Variable
-             (iter (for tryable-type in (hole-tryable-types hole))
-               (for (the fixnum i) from 0)
-               (when (equal tryable-type type)
-                 (funcall cont `(tryable ,i))))
-             (t:match term
-               ((list 'tryable _))
-               ((list* op args)
-                ;; Projection
-                (mapc
-                 (lambda (arg arg-type)
-                   (when (equal arg-type type)
-                     (funcall cont arg)))
-                 args (arg-types op type))
-                ;; Subterms
-                (klet ((cont (args) (funcall cont (cons op args))))
-                  (map-one #'cont #'process args (arg-types op type)))))))
-    (process cont term (hole-type hole))))
+(defun replace-nth (list i elem)
+  (declare (type fixnum i))
+  (if (> i 0)
+      (cons (car list) (replace-nth (cdr list) (1- i) elem))
+      (cons elem (cdr list))))
+(defun term-size (term &aux (counter 0))
+  (labels ((process (term)
+             (incf counter)
+             (when (compound-term-p term)
+               (mapc #'process (cdr term)))))
+    (process term)
+    counter))
+(defun replace-subterm (term i f)
+  (labels ((process (term)
+             (if (zerop i)
+                 (funcall f term)
+                 (progn
+                   (decf i)
+                   (if (compound-term-p term)
+                       (cons (car term) (mapcar #'process (cdr term)))
+                       term)))))
+    (process term)))
+(defun generate-mutation (term hole)
+  "Randomly generate a mutation of `term' for a given `hole'."
+  (labels ((process (term type)
+             (choice
+              ;; Construction
+               (0.3 (bind ((f (choose-list (library-functions type)))
+                           (args (mapcar
+                                  (lambda (arg-type)
+                                    (if (equal arg-type type)
+                                        term
+                                        (default-term arg-type)))
+                                  (arg-types f type))))
+                      (cons f args)))
+              ;; Variable
+               (1.0 (bind (((:values tryable-type i) (choose-list (hole-tryable-types hole))))
+                      (if (equal tryable-type type)
+                          `(tryable ,i)
+                          (fail))))
+               (1.0 (t:ematch term
+                      ((list 'tryable _) (fail))
+                      ((list* op args)
+                       (bind (((:values arg i) (choose-list args))
+                              (arg-type (nth i (arg-types op type))))
+                         (choice
+                           ;; Projection
+                           (1.0 (if (equal arg-type type) arg (fail)))
+                           ;; Subterms
+                           (1.0 (cons op (replace-nth args i (process arg arg-type))))))))))))
+    (process term (hole-type hole))))
 #+end_src
 
-#+begin_src lisp :load no :results output
-(let ((*library-table* (make-hash-table :test 'equal)))
-  (add-library-function 'cons 'list-of)
-  (add-library-function 'nil 'list-of)
-  (add-library-function 'succ 'nat)
-  (add-library-function 'zero 'nat)
-  
-  (generate-mutations
-   #'print '(cons (zero) (nil))
-   (make-hole :type '(list-of nat)
-              :tryable-types '(nat nat (list-of nat)))))
-#+end_src
-
-#+RESULTS:
-#+begin_example
-(NIL) 
-(CONS (ZERO) (CONS (ZERO) (NIL))) 
-(TRYABLE 2) 
-(NIL) 
-((ZERO) (NIL)) 
-((SUCC (ZERO)) (NIL)) 
-((TRYABLE 0) (NIL)) 
-((TRYABLE 1) (NIL)) 
-((ZERO) (NIL)) 
-((ZERO) (CONS (ZERO) (NIL))) 
-((ZERO) (TRYABLE 2)) 
-#+end_example
-
-Note that ~generate-mutations~ may return duplicated terms. Caller is advised to perform a cleanup (e.g. using [[http://clhs.lisp.se/Body/f_rm_dup.htm][delete-duplicates]]).
-- Actually,  =delete-duplicates= were used in =random-search= but is now removed. It turns out to be a surprisingly costly operation that consumed 90% of runtime!
-- For natural number programs (where duplication is supposed to be worst), typically I observe about 10~30 duplicates among 100~200 candidates, so not doing =delete-duplicates= should be fine.
-
-**** TODO Can we not generate the full set of mutations?
-It is observed that only a small number of generated mutations is used. Typically <5 out of 100~200 mutations. Can we not generate the full set of mutations?
-
+It is observed that only a small number of generated mutations is used. Typically <5 out of 100~200 mutations. Therefore we don't generate the full set of mutations.
 - Doing a true uniform sample out of the set of mutations without generating them will require computing the size of mutation sets at each choice point, which might be as costly as generating them.
-
-- An alternative would be to do a random choice at each choice point. This will bias towards mutations near the root and the probability of descending into subterms decreases exponentially. Is this reasonable?
+- An alternative would be to do a random choice at each choice point. This will bias towards mutations near the root and the probability of descending into subterms decreases exponentially. This is what we currently do. Is this reasonable?
 
 *** Size and edit distance metrics
 We compile specialized versions of ~value-size-function~ and ~edit-distance-function~ for each type, because they have a big impact on performance. At runtime, ~edit-distance-function~ uses ~*edit-distance-memo*~ table to perform Dynamic Programming calculation of edit distance. The size of the table and any resizing will affect performance, so you should keep it as small as possible.
@@ -967,7 +978,7 @@ We compile specialized versions of ~value-size-function~ and ~edit-distance-func
         (declare (type fixnum result))
         (mapc (lambda (subterm)
                 (incf result (term-size subterm)))
-              term)
+              (cdr term))
         result)
       1))
 (progn
@@ -1084,40 +1095,6 @@ It should be `clrhash'-ed regularly to avoid growth in size for performance reas
 #+end_src
 
 The following perform one single trace of MCMC search, stopping after =*restart*= proposals (and returning =nil= if it stops without finding a solution). Users are expected to have some driver loop that calls it repeatedly until success.
-#+begin_src lisp :load no
-(defvar *beta* 5.0)
-(defun mcmc-search (par mutate cost)
-  (let ((n 0))
-    (prog1
-        (catch 'random-search
-          (bind ((*edit-distance-memo* (make-edit-distance-memo))
-                 (candidate-costs (make-array 0 :adjustable t))
-                 (par-1 par)
-                 (cost-1 (funcall cost par)))
-            (iter
-              (while (< n *restart*))
-              (incf n)
-              (let (candidates)
-                (klet ((cont (par-2) (push par-2 candidates)))
-                  (funcall mutate #'cont par-1))
-                (setf candidates (coerce candidates 'vector))
-                (adjust-array candidate-costs (length candidates)
-                              :initial-element nil)
-                (iter (for i index-of-vector candidate-costs)
-                  (setf (aref candidate-costs i) nil))
-                (iter (for j from (* (length candidates) 4) by -1)
-                  (for choice = (random (length candidates)))
-                  (for candidate = (aref candidates choice))
-                  (for cost-2 = (s:ensure (aref candidate-costs choice)
-                                  (funcall cost candidate)))
-                  (unless (> j 0)
-                    (vom:info "All candidates are bad, search interrupted.")
-                    (throw 'random-search nil))
-                  (when (accept-p cost-2 cost-1 *beta*)
-                    (return (psetf cost-1 cost-2 par-1 candidate))))))))
-      (vom:info "Search stopped, ~a accepted proposals." n))))
-#+end_src
-
 #+begin_src lisp
 (defvar *beta* 5.0)
 (defun mcmc-search (par mutate cost)
@@ -1133,10 +1110,11 @@ The following perform one single trace of MCMC search, stopping after =*restart*
               (for candidate = (funcall mutate par-1))
               (for cost-2 = (funcall cost candidate))
               (when (accept-p cost-2 cost-1 *beta*)
-                (return (psetf cost-1 cost-2 par-1 candidate))))))
+                (psetf cost-1 cost-2 par-1 candidate)))
+            (print (list par-1 cost-1))
+            nil))
       (vom:info "Search stopped, ~a accepted proposals." n))))
 #+end_src
-
 
 #+begin_src lisp
 (defun greedy-search (par mutate cost)
@@ -1222,16 +1200,17 @@ Similar to =random-search=, the following perform one single trace of MCMC searc
 #+begin_src lisp
 (defun solve-skeleton-one-try (skeleton examples library-functions)
   (let ((*library-table* (make-hash-table :test 'equal)))
-    (labels ((mutate (cont par)
-               (map-one cont #'generate-mutations
-                        par (skeleton-holes skeleton)))
+    (labels ((mutate (par)
+               (one-value
+                 (bind (((:values hole i) (choose-list (skeleton-holes skeleton))))
+                  (replace-nth par i (generate-mutation (nth i par) hole)))))
              (cost (par)
                (bind (((:values cost-error cost-norm)
                        (skeleton-cost skeleton examples par)))
                  #+nil (print (list par cost-error cost-norm))
                  (when (zerop cost-error)
                    (throw 'random-search par))
-                 (+ cost-error cost-norm))))
+                 (+ cost-error (* 3.0 cost-norm)))))
       (mapc
        (lambda (entry) (apply #'add-library-function entry))
        library-functions)
