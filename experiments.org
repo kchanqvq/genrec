@@ -1,0 +1,780 @@
+# -*- Mode: POLY-ORG ;-*- ---
+#+TITLE: GENREC
+#+AUTHOR: QH
+* Experiments
+** Natural Numbers
+*** Multiplication
+#+begin_src lisp
+(uiop:define-package #:genrec/experiments/nat
+    (:mix #:cl #:genrec #:serapeum))
+(in-package #:genrec/experiments/nat)
+(defproblem nat-mul (fixnum fixnum) fixnum
+  (a b) (* a b))
+#+end_src
+
+#+begin_src lisp :load no
+(def nat-skeleton
+  (para-skeleton
+   (function (nat nat) nat)
+   nat nat nat))
+(def nat-skeleton
+  (population-skeleton
+   (function (nat nat) nat)
+   (function (nat nat) nat)))
+(def nat-examples
+  '(((0 0) 0) ((1 0) 0) ((0 1) 0) ((2 0) 0) ((1 1) 1) ((0 2) 0) ((0 3) 0) ((2 1) 2) ((3 0) 0) ((2 2) 4) ((0 4) 0) ((1 3) 3) ((3 1) 3) ((5 2) 10) ((2 5) 10) ((8 0) 0)))
+(solve-skeleton nat-skeleton nat-examples '((zero nat) (succ nat)))
+#+end_src
+
+** Lambda Calculus (de Brujin index)
+#+begin_src lisp
+(uiop:define-package #:genrec/experiments/lc
+    (:mix #:cl #:genrec #:serapeum))
+(in-package #:genrec/experiments/lc)
+(define-adt lc
+  (var (index nat))
+  (lam (body lc))
+  (app (op lc) (arg lc)))
+(define-adt lcv
+  (clo (env (list-of lcv)) (body lc))
+  (bot))
+(defun safe-nth (n l)
+  (let ((cons (nthcdr n l)))
+    (if cons (car cons) 'bot)))
+(setf (get 'safe-nth 'arg-types) (lambda (r) `(nat (list-of ,r))))
+(defproblem lc-apply (lcv lcv) lcv
+  (op arg)
+  (etypecase op
+    (clo (lc (clo-body op) (cons arg (clo-env op))))
+    ((eql bot) 'bot)))
+(defproblem lc (lc (list-of lcv)) lcv
+  (lc env)
+  (etypecase lc
+    (var (safe-nth (var-index lc) env))
+    (app (lc-apply (lc (app-op lc) env)
+                   (lc (app-arg lc) env)))
+    (lam (clo env (lam-body lc)))))
+(def lc-examples
+  (inputs-to-examples
+   #'lc
+   (list (lam (var 0)) nil)
+   (list (lam (var 1)) nil)
+   (list (lam (var 0)) (list 'bot))
+   (list (lam (var 1)) (list 'bot))
+   (list (lam (var 1)) (list (clo nil (var 0))))
+   (list (var 0) (list (clo nil (var 0))))
+   (list (var 1) (list (clo nil (var 0))))
+   (list (lam (lam (var 0))) nil)
+   (list (app (lam (var 0)) (lam (var 0))) nil)
+   (list (app (var 0) (var 0)) nil)
+   (list (app (lam (var 0)) (var 0)) nil)
+   (list (app (var 0) (lam (var 0))) nil)
+   (list (app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 0))) nil)
+   (list (app (app (lam (lam (var 0))) (lam (var 1))) (lam (var 0))) nil)
+   (list (app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 1))) nil)
+   (list (app (lam (lam (var 0))) (lam (var 0))) nil)
+   (list (app (lam (lam (var 0))) (lam (var 1))) nil)
+   (list (app (lam (lam (var 1))) (lam (var 0))) nil)))
+(def lc-skeleton
+  (population-skeleton
+   (function (lcv lcv) lcv)
+   (function (lcv lc (list-of lcv)) lcv)
+   (function (lc (list-of lcv)) lcv)))
+(def lc-library '((clo lcv) (safe-nth lcv)
+                  (cons (list-of lcv))))
+#+end_src
+
+The following experiments are run with =*restart*= is set to 1M proposals (which never happens), so that we can observe behavior of single uninterrupted search traces. It's run with a version of skeleton that does /not/ generate recursive calls for non-recursive dispatch cases. Later revision removed this restriction, that does not help in this case (in fact making it slower because it introduces more parameters), but is more general. All runs find the solution successfully, but with a wide distribution of run time and iterations (accepted proposals). The latter ranges from 4K to 500K.
+
+#+begin_src lisp :load no :results output verbatim
+(def lc-skeleton
+  (population-skeleton
+   (function (lcv lcv) lcv)
+   (function (lc (list-of lcv)) lcv)))
+(with-profiling
+  (pprint
+   (solve-skeleton-one-try lc-skeleton lc-examples
+                           '((safe-nth lcv) (clo lcv) (cons (list-of lcv)))))
+  (terpri))
+#+end_src
+
+#+RESULTS:
+#+begin_example :load no
+  <INFO> [11:52:55] genrec - Profiling started
+  <INFO> [11:52:55] genrec - Search stopped, 4421 accepted proposals.
+
+((TRYABLE 3) (TRYABLE 5) (TRYABLE 6) (TRYABLE 3)
+ (CONS (CLO (NIL) (VAR (ZERO))) (TRYABLE 2)) (SAFE-NTH (ZERO) (NIL))
+ (SAFE-NTH (ZERO) (NIL)) (TRYABLE 1) (CONS (TRYABLE 3) (TRYABLE 0))
+ (SAFE-NTH (ZERO) (CONS (BOT) (CONS (CLO (NIL) (VAR (ZERO))) (NIL))))
+ (SAFE-NTH (TRYABLE 0) (TRYABLE 2)) (CLO (TRYABLE 6) (TRYABLE 4)) (TRYABLE 1)
+ (TRYABLE 0) (TRYABLE 3) (TRYABLE 4) (TRYABLE 0) (CLO (NIL) (VAR (ZERO)))
+ (TRYABLE 0) (TRYABLE 2) (TRYABLE 0) (TRYABLE 0) (TRYABLE 2) (TRYABLE 2)
+ (TRYABLE 5) (TRYABLE 0) (SAFE-NTH (ZERO) (NIL)) (TRYABLE 1) (TRYABLE 3))
+  <INFO> [11:52:55] genrec - Profiling ended. 5348 programs, 4420 accepted, 96264 evaluations, 131 evaluation errors, 0.198 s real time, 26981.3 p/s, 485664.3 e/s.
+#+end_example
+
+#+RESULTS:
+#+begin_example :load no
+  <INFO> [11:52:10] genrec - Profiling started
+  <INFO> [11:52:39] genrec - Search stopped, 501055 accepted proposals.
+
+((TRYABLE 3) (TRYABLE 1) (TRYABLE 5) (TRYABLE 3) (TRYABLE 2) (TRYABLE 4)
+ (TRYABLE 3) (TRYABLE 1) (CONS (TRYABLE 3) (TRYABLE 0)) (TRYABLE 0)
+ (SAFE-NTH (TRYABLE 0) (TRYABLE 2)) (TRYABLE 0) (CLO (NIL) (VAR (ZERO)))
+ (TRYABLE 1) (TRYABLE 3) (TRYABLE 4) (CLO (NIL) (VAR (ZERO)))
+ (CLO (TRYABLE 3) (TRYABLE 1)) (TRYABLE 0) (TRYABLE 2) (TRYABLE 0) (TRYABLE 0)
+ (TRYABLE 2) (TRYABLE 2) (TRYABLE 5) (SAFE-NTH (ZERO) (NIL))
+ (CLO (CONS (BOT) (CONS (SAFE-NTH (ZERO) (CONS (BOT) (NIL))) (TRYABLE 4)))
+      (TRYABLE 2))
+ (TRYABLE 1) (TRYABLE 3))
+  <INFO> [11:52:39] genrec - Profiling ended. 776265 programs, 501054 accepted, 13972770 evaluations, 33886 evaluation errors, 28.604 s real time, 27138.2 p/s, 488487.3 e/s.
+#+end_example
+
+#+RESULTS:
+#+begin_example :load no
+  <INFO> [11:51:56] genrec - Profiling started
+  <INFO> [11:51:58] genrec - Search stopped, 36033 accepted proposals.
+
+((TRYABLE 1) (TRYABLE 5) (TRYABLE 2) (TRYABLE 3) (CONS (TRYABLE 5) (TRYABLE 2))
+ (CLO (TRYABLE 1) (VAR (ZERO))) (CLO (TRYABLE 1) (VAR (ZERO))) (TRYABLE 1)
+ (TRYABLE 0) (SAFE-NTH (ZERO) (NIL)) (SAFE-NTH (TRYABLE 0) (TRYABLE 2))
+ (TRYABLE 2) (CLO (NIL) (VAR (ZERO))) (SAFE-NTH (ZERO) (NIL)) (TRYABLE 2)
+ (TRYABLE 4) (CLO (TRYABLE 3) (VAR (ZERO))) (CLO (TRYABLE 3) (TRYABLE 1))
+ (TRYABLE 1) (TRYABLE 2) (TRYABLE 0) (TRYABLE 2) (TRYABLE 0) (TRYABLE 3)
+ (TRYABLE 5) (CLO (CONS (BOT) (TRYABLE 4)) (TRYABLE 3)) (TRYABLE 0) (TRYABLE 0)
+ (TRYABLE 3))
+  <INFO> [11:51:58] genrec - Profiling ended. 49538 programs, 36032 accepted, 891684 evaluations, 2111 evaluation errors, 1.777 s real time, 27878.4 p/s, 501810.4 e/s.
+#+end_example
+
+#+RESULTS:
+#+begin_example :load no
+  <INFO> [11:51:32] genrec - Profiling started
+  <INFO> [11:51:34] genrec - Search stopped, 34637 accepted proposals.
+
+((TRYABLE 3) (SAFE-NTH (ZERO) (TRYABLE 3)) (TRYABLE 0) (TRYABLE 3) (TRYABLE 2)
+ (TRYABLE 3) (TRYABLE 0) (TRYABLE 1) (CONS (TRYABLE 3) (TRYABLE 0)) (TRYABLE 0)
+ (SAFE-NTH (TRYABLE 0) (TRYABLE 2)) (TRYABLE 2) (TRYABLE 2) (TRYABLE 1)
+ (TRYABLE 2) (CONS (BOT) (TRYABLE 4)) (CLO (NIL) (VAR (ZERO)))
+ (CLO (TRYABLE 3) (TRYABLE 1)) (TRYABLE 1) (TRYABLE 2) (TRYABLE 0) (TRYABLE 0)
+ (TRYABLE 2) (TRYABLE 2) (TRYABLE 5) (TRYABLE 0) (TRYABLE 0) (TRYABLE 1)
+ (TRYABLE 3))
+  <INFO> [11:51:34] genrec - Profiling ended. 45056 programs, 34636 accepted, 811008 evaluations, 1627 evaluation errors, 1.642 s real time, 27443.6 p/s, 493984.2 e/s.
+#+end_example
+
+#+RESULTS:
+#+begin_example :load no
+  <INFO> [11:50:57] genrec - Profiling started
+  <INFO> [11:50:59] genrec - Search stopped, 48035 accepted proposals.
+
+((TRYABLE 1) (TRYABLE 1) (TRYABLE 0) (TRYABLE 3) (CONS (TRYABLE 5) (TRYABLE 2))
+ (CLO (NIL) (VAR (ZERO))) (TRYABLE 3) (TRYABLE 1) (CONS (BOT) (TRYABLE 0))
+ (SAFE-NTH (ZERO) (NIL)) (SAFE-NTH (TRYABLE 0) (TRYABLE 2)) (TRYABLE 2)
+ (CLO (NIL) (VAR (ZERO))) (TRYABLE 0) (TRYABLE 3) (TRYABLE 4)
+ (CLO (NIL) (VAR (ZERO))) (CLO (TRYABLE 3) (TRYABLE 1)) (TRYABLE 1) (TRYABLE 2)
+ (TRYABLE 0) (TRYABLE 2) (TRYABLE 0) (TRYABLE 3) (TRYABLE 5)
+ (CLO (TRYABLE 4) (VAR (ZERO))) (SAFE-NTH (ZERO) (CONS (BOT) (NIL)))
+ (TRYABLE 0) (TRYABLE 3))
+  <INFO> [11:50:59] genrec - Profiling ended. 61539 programs, 48034 accepted, 1107702 evaluations, 2046 evaluation errors, 2.271 s real time, 27098.9 p/s, 487779.3 e/s.
+#+end_example
+
+Curiously, using a =nested-dispatch-skeleton= roughly equivalent to an "inlined" version of the above =population-skeleton= also solves the problem, but in very consistent time (10K~20K accepted proposals).
+#+begin_src lisp :load no :results output verbatim
+(def lc-skeleton
+  (nested-dispatch-skeleton
+   (function (lc (list-of lcv)) lcv)
+   lc lcv))
+(with-profiling
+    (pprint
+     (solve-skeleton-one-try lc-skeleton lc-examples
+                     '((safe-nth lcv) (clo lcv) (cons (list-of lcv)))))
+  (terpri))
+#+end_src
+
+#+RESULTS:
+#+begin_example :load no
+  <INFO> [18:49:50] genrec - Profiling started
+  <INFO> [18:49:51] genrec - Search stopped, 12854 accepted proposals.
+
+((SAFE-NTH (TRYABLE 4) (CONS (TRYABLE 1) (TRYABLE 2))) (TRYABLE 4) (TRYABLE 5)
+ (TRYABLE 1) (CONS (BOT) (TRYABLE 4)) (SAFE-NTH (TRYABLE 0) (TRYABLE 2))
+ (SAFE-NTH (TRYABLE 0) (NIL)) (CLO (TRYABLE 8) (TRYABLE 3)) (TRYABLE 5)
+ (TRYABLE 7) (TRYABLE 1) (CONS (TRYABLE 3) (TRYABLE 6)) (TRYABLE 0)
+ (CLO (TRYABLE 4) (TRYABLE 2)) (TRYABLE 1) (TRYABLE 3) (TRYABLE 0) (TRYABLE 2)
+ (TRYABLE 0) (TRYABLE 2) (CONS (TRYABLE 4) (TRYABLE 8)) (TRYABLE 5) (TRYABLE 0)
+ (SAFE-NTH (ZERO) (CONS (SAFE-NTH (ZERO) (NIL)) (NIL))) (TRYABLE 0) (TRYABLE 1)
+ (TRYABLE 4) (TRYABLE 1) (TRYABLE 3) (TRYABLE 0))
+  <INFO> [18:49:51] genrec - Profiling ended. 17397 programs, 12853 accepted, 313146 evaluations, 875 evaluation errors, 0.582 s real time, 29878.5 p/s, 537813.1 e/s.
+#+end_example
+
+#+RESULTS:
+#+begin_example :load no
+  <INFO> [18:49:40] genrec - Profiling started
+  <INFO> [18:49:40] genrec - Search stopped, 12277 accepted proposals.
+
+((TRYABLE 0) (TRYABLE 2) (CONS (TRYABLE 0) (CONS (BOT) (TRYABLE 1)))
+ (TRYABLE 3) (TRYABLE 0) (SAFE-NTH (TRYABLE 0) (TRYABLE 2))
+ (SAFE-NTH (TRYABLE 0) (NIL)) (TRYABLE 5) (TRYABLE 2) (TRYABLE 1) (TRYABLE 1)
+ (TRYABLE 6) (CLO (TRYABLE 4) (TRYABLE 2)) (SAFE-NTH (ZERO) (NIL)) (TRYABLE 2)
+ (CONS (CLO (CONS (BOT) (NIL)) (TRYABLE 1)) (TRYABLE 3)) (TRYABLE 1)
+ (TRYABLE 2) (TRYABLE 0) (TRYABLE 2) (CONS (TRYABLE 3) (TRYABLE 8)) (TRYABLE 4)
+ (TRYABLE 7) (SAFE-NTH (ZERO) (NIL)) (TRYABLE 1) (TRYABLE 2) (TRYABLE 4)
+ (TRYABLE 0) (CONS (SAFE-NTH (ZERO) (TRYABLE 3)) (TRYABLE 3)) (TRYABLE 0))
+  <INFO> [18:49:40] genrec - Profiling ended. 16944 programs, 12276 accepted, 304992 evaluations, 992 evaluation errors, 0.556 s real time, 30468.4 p/s, 548430.4 e/s.
+#+end_example
+
+#+RESULTS:
+#+begin_example :load no
+  <INFO> [18:49:31] genrec - Profiling started
+  <INFO> [18:49:31] genrec - Search stopped, 13770 accepted proposals.
+
+((SAFE-NTH (TRYABLE 4) (TRYABLE 6)) (TRYABLE 4) (CONS (TRYABLE 0) (TRYABLE 1))
+ (TRYABLE 1) (TRYABLE 4) (SAFE-NTH (TRYABLE 0) (TRYABLE 2))
+ (CLO (TRYABLE 2) (TRYABLE 1)) (CLO (TRYABLE 8) (TRYABLE 3)) (TRYABLE 5)
+ (TRYABLE 1) (TRYABLE 5) (TRYABLE 6) (CLO (NIL) (VAR (ZERO)))
+ (CLO (CONS (TRYABLE 0) (TRYABLE 4)) (TRYABLE 2)) (TRYABLE 1) (TRYABLE 3)
+ (TRYABLE 0) (TRYABLE 2) (TRYABLE 1) (TRYABLE 6) (TRYABLE 8) (TRYABLE 1)
+ (CONS (TRYABLE 2) (TRYABLE 7)) (TRYABLE 1) (TRYABLE 1) (TRYABLE 2) (TRYABLE 4)
+ (TRYABLE 0) (TRYABLE 3) (TRYABLE 0))
+  <INFO> [18:49:31] genrec - Profiling ended. 18851 programs, 13769 accepted, 339318 evaluations, 1071 evaluation errors, 0.638 s real time, 29559.9 p/s, 532078.3 e/s.
+#+end_example
+
+#+RESULTS:
+#+begin_example :load no
+  <INFO> [18:49:20] genrec - Profiling started
+  <INFO> [18:49:21] genrec - Search stopped, 19179 accepted proposals.
+
+((SAFE-NTH (ZERO) (NIL)) (TRYABLE 2)
+ (CONS (CLO (NIL) (VAR (ZERO))) (CONS (TRYABLE 0) (TRYABLE 1))) (TRYABLE 3)
+ (TRYABLE 0) (SAFE-NTH (TRYABLE 0) (TRYABLE 2)) (SAFE-NTH (TRYABLE 0) (NIL))
+ (CLO (TRYABLE 8) (TRYABLE 6)) (TRYABLE 2) (TRYABLE 1) (TRYABLE 5) (TRYABLE 6)
+ (CLO (TRYABLE 4) (TRYABLE 2)) (TRYABLE 0) (TRYABLE 1) (TRYABLE 3) (TRYABLE 0)
+ (TRYABLE 2) (TRYABLE 1) (TRYABLE 5) (TRYABLE 8) (TRYABLE 1)
+ (CONS (TRYABLE 3) (TRYABLE 7)) (TRYABLE 0) (TRYABLE 0) (TRYABLE 1) (TRYABLE 4)
+ (TRYABLE 1) (TRYABLE 3) (TRYABLE 0))
+  <INFO> [18:49:21] genrec - Profiling ended. 26501 programs, 19178 accepted, 477018 evaluations, 1411 evaluation errors, 0.881 s real time, 30089.5 p/s, 541611.1 e/s.
+#+end_example
+
+#+RESULTS:
+#+begin_example :load no
+  <INFO> [18:49:10] genrec - Profiling started
+  <INFO> [18:49:11] genrec - Search stopped, 10903 accepted proposals.
+
+((TRYABLE 1) (TRYABLE 4) (TRYABLE 5) (TRYABLE 3) (TRYABLE 0)
+ (SAFE-NTH (TRYABLE 0) (TRYABLE 2)) (SAFE-NTH (TRYABLE 0) (NIL))
+ (CLO (TRYABLE 8) (TRYABLE 6)) (TRYABLE 6) (TRYABLE 1) (TRYABLE 1) (TRYABLE 0)
+ (CLO (TRYABLE 4) (TRYABLE 2)) (TRYABLE 0) (TRYABLE 1) (TRYABLE 3) (TRYABLE 0)
+ (CONS (CLO (NIL) (VAR (ZERO))) (TRYABLE 2)) (TRYABLE 0) (TRYABLE 2)
+ (CONS (TRYABLE 3) (TRYABLE 1)) (TRYABLE 6) (CONS (BOT) (TRYABLE 7))
+ (TRYABLE 1) (TRYABLE 1) (TRYABLE 2) (TRYABLE 4) (TRYABLE 0) (TRYABLE 3)
+ (TRYABLE 0))
+  <INFO> [18:49:11] genrec - Profiling ended. 14588 programs, 10902 accepted, 262584 evaluations, 748 evaluation errors, 0.789 s real time, 18480.3 p/s, 332646.3 e/s.
+#+end_example
+
+#+begin_src lisp :load no :results output verbatim
+(def lc-skeleton
+  (population-skeleton
+   (function ((list-of lcv) lcv lc) lcv)
+   (function (lc (list-of lcv) lcv) lcv)
+   (function (lcv lc (list-of lcv)) lcv)
+   (function (lc (list-of lcv)) lcv)))
+(with-profiling
+  (pprint
+   (solve-skeleton-one-try lc-skeleton lc-examples
+                           '((safe-nth lcv) (clo lcv) (cons (list-of lcv)))))
+  (terpri))
+#+end_src
+
+** Stratified Synthesis of Interpreters
+Attempted ideas:
+- As the starting point, we use a skeleton for the interpreter of the full language (a monolithic ~eval~ entry function and a few helper functions), and give it examples from the full language. This stop working after a few language features (I recall 2 features already stop working).
+- Split the full language into sublanguages, and synthesize sublanguages one by one. Use a skeleton for the full interpreter, but give it only examples from a sublanguage at a time. Once a sublanguage is synthesized, use =compute-live-holes= to find all live holes and freeze (using variable =*frozen-holes*=) them when synthesizing subsequent sublanguages, so that the already satisified examples are guaranteed to stay satisfied during subsequent synthesis.
+  - This has high probability of not working, because the solution usually use more functions than strictly needed. Some functions are used in a trivial manner, but that makes their holes become live. The next sublanguage then don't have enough changeable functions to synthesize a solution.
+  - Manually freezing the unneeded helper functions (e.g. freeze helper functions needed for sublanguage #2 when solving sublanguage #1) make it work for arith+cond, but stop working for arith+cond+lc.
+    - For the arith+cond experiments, arith is much harder than cond. It spent a few seconds to solve arith, then finds hundreds of solutions for cond within seconds.
+    - For arith+cond+lc, it failed to synthesize first arith sublanguage (and everything after arith doesn't even run) within two minutes.
+  - The roadblock is likely the size of the skeleton for the full interpreter (6 helper functions + 1 entry eval function for arith+cond+lc). Even if unneeded functions are frozen, the changeable holes can still call them, and that just introduce too much noise to the search procedures (too easy to get trivial values).
+#+begin_src lisp
+(uiop:define-package #:genrec/experiments/interpreter
+    (:mix #:cl #:genrec #:serapeum #:iter))
+(in-package #:genrec/experiments/interpreter)
+#+end_src
+*** Arithmetic
+#+begin_src lisp
+(define-adt arith-term
+  (lit (num nat))
+  (add (l term) (r term))
+  (bot))
+(define-adt arith-value
+  (num (value nat))
+  (bot))
+(define-union term arith-term)
+(defproblem arith-eval (term) arith-value
+    (term)
+  (etypecase term
+    (lit (num (lit-num term)))
+    (add (let ((l (arith-eval (add-l term)))
+               (r (arith-eval (add-r term))))
+           (if (and (num-p l) (num-p r))
+               (num (+ (num-value l) (num-value r)))
+               'bot)))
+    ((eql bot) 'bot)))
+(def arith-examples
+  (inputs-to-examples
+   #'arith-eval
+   (list (lit 0))
+   (list (lit 1))
+   (list 'bot)
+   (list (add (lit 0) 'bot))
+   (list (add 'bot (lit 0)))
+   (list (add 'bot (lit 2)))
+   (list (add (lit 0) 'bot))
+   (list (add (lit 2) (lit 0)))
+   (list (add (lit 0) (lit 2)))
+   (list (add (lit 1) (lit 2)))))
+(def arith-examples-more
+  (inputs-to-examples
+   #'arith-eval
+   (list (lit 0))
+   (list (lit 1))
+   (list 'bot)
+   (list (add (lit 0) 'bot))
+   (list (add 'bot (lit 0)))
+   (list (add 'bot (lit 2)))
+   (list (add (lit 0) (lit 2)))
+   (list (add (lit 2) (lit 0)))
+   (list (add (lit 0) (lit 0)))
+   (list (lit 2))
+   (list (lit 3))
+   (list (add (lit 2) (lit 2)))
+   (list (add (lit 5) (lit 3)))))
+(def arith-library '((+ nat) (num arith-value) (bot arith-value)))
+#+end_src
+
+Sanity check: The following should be solved with ease (less than 256 searches starting from =*seed*=0=).
+Note that this only works after replacing the recursive references =term='s in =(define-adt arith-term ...)= with =arith-term=.
+#+begin_src lisp :load no
+(def arith-skeleton-1
+  (population-skeleton
+   (function (arith-value nat) arith-value)
+   (function (arith-value arith-term) arith-value)
+   (function (arith-term) arith-value)))
+#+end_src
+
+#+begin_src lisp
+  (def arith-skeleton
+    (interpreter-skeleton term
+      (function (arith-value nat) arith-value)
+      (function (arith-value term) arith-value)
+      (function (arith-term) arith-value)))
+#+end_src
+
+*** Conditional
+#+begin_src lisp
+(define-adt cond-term
+  (ifz (test term) (then term) (else term)))
+(define-union term arith-term cond-term)
+(defproblem cond-eval (term) arith-value
+    (term)
+  (etypecase term
+    (lit (num (lit-num term)))
+    (add (let ((l (cond-eval (add-l term)))
+               (r (cond-eval (add-r term))))
+           (if (and (num-p l) (num-p r))
+               (num (+ (num-value l) (num-value r)))
+               'bot)))
+    (ifz (let ((test (cond-eval (ifz-test term))))
+           (typecase test
+             (num (if (zerop (num-value test))
+                      (cond-eval (ifz-then term))
+                      (cond-eval (ifz-else term))))
+             (t 'bot))))
+    ((eql bot) 'bot)))
+(def cond-examples
+  (inputs-to-examples
+   #'cond-eval
+   (list (ifz (lit 0) (lit 0) (lit 2)))
+   (list (ifz (lit 1) (lit 0) (lit 2)))
+   (list (ifz (lit 0) (add (lit 0) (lit 2)) (lit 0)))
+   (list (ifz (lit 0) (add (lit 1) (lit 2)) (lit 0)))
+   (list (ifz (lit 0) 'bot 'bot))
+   (list (ifz (lit 1) (lit 0) (add (lit 0) (lit 2))))
+   (list (ifz (lit 1) (lit 0) (add (lit 1) (lit 2))))
+   (list (ifz (lit 1) 'bot 'bot))))
+(def cond-skeleton
+  (interpreter-skeleton term
+    (function (nat term term) arith-value)
+    (function (arith-value term term) arith-value)
+    (function (cond-term) arith-value)))
+(def cond-library arith-library)
+#+end_src
+
+#+begin_src lisp :load no
+(genrec::stratified-solve 'cond-skeleton
+                            '(arith-examples cond-examples)
+                            'cond-library
+                            '((0 1) ()))
+#+end_src
+
+#+RESULTS:
+#+begin_src lisp :load no
+((+ (TRYABLE 5) (TRYABLE 5)) (TRYABLE 7) (TRYABLE 7) (BOT) (TRYABLE 6)
+ (TRYABLE 6) (TRYABLE 0) (TRYABLE 5) (TRYABLE 2) (TRYABLE 7) (TRYABLE 6) (BOT)
+ (TRYABLE 6) (TRYABLE 7) (TRYABLE 8) (NUM (+ (ZERO) (ZERO))) (TRYABLE 8)
+ (TRYABLE 7) (TRYABLE 4) (TRYABLE 5) (TRYABLE 1) (TRYABLE 8) (TRYABLE 8)
+ (TRYABLE 4) (+ (TRYABLE 5) (TRYABLE 5)) (TRYABLE 8) (TRYABLE 7) (BOT)
+ (TRYABLE 7) (TRYABLE 7) (TRYABLE 2) (TRYABLE 5) (TRYABLE 0) (TRYABLE 7)
+ (TRYABLE 8) (TRYABLE 0) (ZERO) (TRYABLE 7) (TRYABLE 6) (TRYABLE 0) (TRYABLE 6)
+ (TRYABLE 6) (TRYABLE 1) (ZERO) (TRYABLE 0) (TRYABLE 7) (TRYABLE 7) (TRYABLE 4)
+ (TRYABLE 7) (BOT) (BOT) (TRYABLE 1) (BOT) (BOT) (TRYABLE 2) (TRYABLE 5)
+ (TRYABLE 6) (BOT) (BOT) (NUM (+ (TRYABLE 7) (TRYABLE 5))) (TRYABLE 6) (BOT)
+ (BOT) (TRYABLE 2) (BOT) (BOT) (TRYABLE 2) (TRYABLE 6) (TRYABLE 0) (BOT) (BOT)
+ (TRYABLE 0) (TRYABLE 5) (TRYABLE 7) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7)
+ (TRYABLE 7) (TRYABLE 4) (TRYABLE 5) (TRYABLE 3) (TRYABLE 7) (TRYABLE 7)
+ (TRYABLE 2) (ZERO) (TRYABLE 6) (TRYABLE 6) (TRYABLE 2) (TRYABLE 6) (TRYABLE 6)
+ (TRYABLE 0) (ZERO) (TRYABLE 0) (TRYABLE 6) (TRYABLE 6) (TRYABLE 1) (TRYABLE 5)
+ (TRYABLE 6) (TRYABLE 6) (TRYABLE 4) (TRYABLE 6) (TRYABLE 6) (TRYABLE 0)
+ (TRYABLE 5) (TRYABLE 0) (TRYABLE 6) (TRYABLE 6) (NUM (TRYABLE 5)) (ZERO)
+ (TRYABLE 6) (TRYABLE 6) (TRYABLE 1) (TRYABLE 7) (TRYABLE 6) (TRYABLE 3)
+ (+ (+ (+ (ZERO) (ZERO)) (+ (ZERO) (ZERO))) (+ (ZERO) (ZERO))) (TRYABLE 4)
+ (TRYABLE 6) (TRYABLE 5) (TRYABLE 3) (ZERO) (TRYABLE 6) (TRYABLE 8) (TRYABLE 4)
+ (TRYABLE 7) (TRYABLE 7) (TRYABLE 1) (ZERO) (TRYABLE 2) (TRYABLE 6) (TRYABLE 5)
+ (TRYABLE 3) (+ (+ (ZERO) (ZERO)) (ZERO)) (TRYABLE 5) (TRYABLE 5) (TRYABLE 3)
+ (TRYABLE 5) (TRYABLE 5) (TRYABLE 1) (+ (ZERO) (ZERO)) (NUM (ZERO)) (TRYABLE 5)
+ (TRYABLE 5) (TRYABLE 0))
+#+end_src
+
+*** Lambda Calculus
+#+begin_src lisp
+(define-adt lc-term
+  (var (index nat))
+  (lam (body term))
+  (app (op term) (arg term)))
+(define-adt lc-value
+  (clo (env (list-of lc-value)) (body term))
+  (num (value nat))
+  (bot))
+(define-union term arith-term cond-term lc-term)
+(defun safe-nth (n l)
+  (let ((cons (nthcdr n l)))
+    (if cons (car cons) 'bot)))
+(setf (get 'safe-nth 'arg-types) (lambda (r) `(nat (list-of ,r))))
+(defproblem lc-eval
+    (term (list-of lc-value)) lc-value
+    (term env)
+  (etypecase term
+    (var (safe-nth (var-index term) env))
+    (app (let ((op (lc-eval (app-op term) env))
+               (arg (lc-eval (app-arg term) env)))
+           (typecase op
+             (clo (lc-eval (clo-body op) (cons arg (clo-env op))))
+             (t 'bot))))
+    (lam (clo env (lam-body term)))
+    (lit (num (lit-num term)))
+    (add (let ((l (lc-eval (add-l term) env))
+               (r (lc-eval (add-r term) env)))
+           (if (and (num-p l) (num-p r))
+               (num (+ (num-value l) (num-value r)))
+               'bot)))
+    ((eql bot) 'bot)))
+(def arith-examples-with-env
+  (mapcar (lambda (e) (list (append (car e) (list nil)) (cadr e)))
+          arith-examples))
+(def cond-examples-with-env
+  (mapcar (lambda (e) (list (append (car e) (list nil)) (cadr e)))
+          cond-examples))
+(def lc-examples
+  (inputs-to-examples
+   #'lc-eval
+   (list (lam (var 0)) nil)
+   (list (lam (var 1)) nil)
+   (list (lam (var 0)) (list 'bot))
+   (list (lam (var 1)) (list 'bot))
+   (list (lam (var 1)) (list (clo nil (var 0))))
+   (list (var 0) (list (clo nil (var 0))))
+   (list (var 1) (list (clo nil (var 0))))
+   (list (lam (lam (var 0))) nil)
+   (list (app (lam (var 0)) (lam (var 0))) nil)
+   (list (app (var 0) (var 0)) nil)
+   (list (app (lam (var 0)) (var 0)) nil)
+   (list (app (var 0) (lam (var 0))) nil)
+   (list (app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 0))) nil)
+   (list (app (app (lam (lam (var 0))) (lam (var 1))) (lam (var 0))) nil)
+   (list (app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 1))) nil)
+   (list (app (lam (lam (var 0))) (lam (var 0))) nil)
+   (list (app (lam (lam (var 0))) (lam (var 1))) nil)
+   (list (app (lam (lam (var 1))) (lam (var 0))) nil)))
+#+nil (def lc-skeleton
+  (population-skeleton
+   (function (lc-value lc-value) lc-value)
+   (function (lc-value lc-term (list-of lc-value)) lc-value)
+   (function (nat lc-term lc-term) lc-value)
+   (function (lc-value lc-term lc-term) lc-value)
+   (function (lc-value nat) lc-value)
+   (function (lc-value lc-term (list-of lc-value)) lc-value)
+   (function (lc-term (list-of lc-value)) lc-value)))
+(def lc/arith-skeleton
+  (interpreter-skeleton term
+    (function (lc-value nat) lc-value)
+    (function (lc-value term (list-of lc-value)) lc-value)
+    (function (arith-term (list-of lc-value)) lc-value)))
+(def lc/cond-skeleton
+  (interpreter-skeleton term
+   (function (nat term term (list-of lc-value)) lc-value)
+   (function (lc-value term term (list-of lc-value)) lc-value)
+   (function (cond-term (list-of lc-value)) lc-value)))
+(def lc-skeleton
+  (interpreter-skeleton term
+    (function (lc-value lc-value) lc-value)
+    (function (lc-value term (list-of lc-value)) lc-value)
+    (function (lc-term (list-of lc-value)) lc-value)))
+(def lc-skeleton-1
+  (population-skeleton
+   (function (lc-value lc-value) lc-value)
+   (function (lc-value lc-term (list-of lc-value)) lc-value)
+   (function (lc-value (list-of lc-value)) lc-value)))
+(def lc-library '((+ nat) (num lc-value) (bot lc-value)
+                  (clo lc-value) (safe-nth lc-value)
+                  (cons (list-of lc-value))))
+#+end_src
+
+#+begin_src lisp :load no
+(let ((genrec::*eval-toplevel*
+        '(lambda (term env)
+          (funcall (serapeum::lastcar (genrec::skeleton-functions lc/arith-skeleton))
+           term env))))
+  (solve-skeleton 'lc/arith-skeleton 'arith-examples-with-env
+                  '((+ nat) (num lc-value) (bot lc-value))))
+#+end_src
+
+#+RESULTS:
+#+begin_src lisp :load no
+<INFO> [12:02:16] genrec - Releasing the swarm with initial seed 0.
+<INFO> [12:02:17] genrec - search launched 256, search completed 0, search failed 0
+<INFO> [12:02:18] genrec - Voila!
+<INFO> [12:02:18] genrec - search launched 256, search completed 1, search failed 0
+<INFO> [12:02:25] genrec - search launched 256, search completed 2, search failed 0
+<INFO> [12:02:26] genrec - search launched 256, search completed 252, search failed 0
+<INFO> [12:02:27] genrec - search launched 256, search completed 255, search failed 0
+((TRYABLE 2) (+ (TRYABLE 6) (TRYABLE 6)) (TRYABLE 2) (BOT) (TRYABLE 3) (BOT)
+ (TRYABLE 3) (TRYABLE 2) (TRYABLE 4) (+ (TRYABLE 3) (TRYABLE 3)) (BOT) (BOT)
+ (NIL) (BOT) (NIL) (NUM (+ (TRYABLE 5) (TRYABLE 3))) (TRYABLE 3) (TRYABLE 4)
+ (TRYABLE 1) (BOT) (NIL) (BOT) (NIL) (TRYABLE 2) (TRYABLE 2) (ZERO) (TRYABLE 1)
+ (TRYABLE 6) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7) (TRYABLE 2) (TRYABLE 2)
+ (TRYABLE 3) (TRYABLE 2) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6)
+ (TRYABLE 0) (TRYABLE 0) (+ (+ (ZERO) (ZERO)) (ZERO)) (TRYABLE 2) (TRYABLE 4)
+ (TRYABLE 5) (TRYABLE 4) (TRYABLE 5) (TRYABLE 3) (TRYABLE 1) (TRYABLE 3)
+ (TRYABLE 2) (BOT) (TRYABLE 5) (BOT) (TRYABLE 5) (NUM (TRYABLE 3)) (TRYABLE 2)
+ (ZERO) (TRYABLE 2) (TRYABLE 3) (TRYABLE 6) (TRYABLE 4) (TRYABLE 6) (TRYABLE 1)
+ (TRYABLE 1) (+ (ZERO) (ZERO)) (TRYABLE 1) (BOT) (TRYABLE 4) (BOT) (TRYABLE 4)
+ (BOT))
+#+end_src
+
+#+begin_src lisp :load no
+(defvar *toplevel-par* nil)
+(let ((genrec::*eval-toplevel*
+        '(let ((arith-par
+                (genrec::compile-par
+                 '((TRYABLE 2) (+ (TRYABLE 6) (TRYABLE 6)) (TRYABLE 2) (BOT) (TRYABLE 3) (BOT)
+                   (TRYABLE 3) (TRYABLE 2) (TRYABLE 4) (+ (TRYABLE 3) (TRYABLE 3)) (BOT) (BOT)
+                   (NIL) (BOT) (NIL) (NUM (+ (TRYABLE 5) (TRYABLE 3))) (TRYABLE 3) (TRYABLE 4)
+                   (TRYABLE 1) (BOT) (NIL) (BOT) (NIL) (TRYABLE 2) (TRYABLE 2) (ZERO) (TRYABLE 1)
+                   (TRYABLE 6) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7) (TRYABLE 2) (TRYABLE 2)
+                   (TRYABLE 3) (TRYABLE 2) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6)
+                   (TRYABLE 0) (TRYABLE 0) (+ (+ (ZERO) (ZERO)) (ZERO)) (TRYABLE 2) (TRYABLE 4)
+                   (TRYABLE 5) (TRYABLE 4) (TRYABLE 5) (TRYABLE 3) (TRYABLE 1) (TRYABLE 3)
+                   (TRYABLE 2) (BOT) (TRYABLE 5) (BOT) (TRYABLE 5) (NUM (TRYABLE 3)) (TRYABLE 2)
+                   (ZERO) (TRYABLE 2) (TRYABLE 3) (TRYABLE 6) (TRYABLE 4) (TRYABLE 6) (TRYABLE 1)
+                   (TRYABLE 1) (+ (ZERO) (ZERO)) (TRYABLE 1) (BOT) (TRYABLE 4) (BOT) (TRYABLE 4)
+                   (BOT))
+                 t)))
+          (lambda (term env)
+            (let ((*toplevel-par* (or *toplevel-par* genrec::*par*)))
+              (etypecase term
+                (arith-term
+                 (let ((genrec::*par* arith-par))
+                   (funcall (serapeum::lastcar (genrec::skeleton-functions lc/arith-skeleton))
+                            term env)))
+                (cond-term
+                 (let ((genrec::*par* *toplevel-par*))
+                   (funcall (serapeum::lastcar (genrec::skeleton-functions lc/cond-skeleton))
+                            term env)))))))))
+  (solve-skeleton 'lc/cond-skeleton 'cond-examples-with-env
+                  '((bot lc-value))))
+#+end_src
+
+#+begin_src lisp :load no
+(def lc/arith-par (solve-skeleton 'lc/arith-skeleton 'arith-examples-with-env
+                                  '((+ nat) (num lc-value) (bot lc-value))))
+lc/arith-par
+#+end_src
+
+#+RESULTS:
+#+begin_src lisp :load no
+((TRYABLE 2) (+ (TRYABLE 6) (TRYABLE 6)) (TRYABLE 2) (TRYABLE 4) (TRYABLE 3)
+ (TRYABLE 4) (TRYABLE 3) (TRYABLE 2) (TRYABLE 4) (+ (TRYABLE 3) (TRYABLE 3))
+ (BOT) (BOT) (NIL) (BOT) (NIL) (NUM (+ (TRYABLE 5) (TRYABLE 3))) (TRYABLE 3)
+ (TRYABLE 4) (TRYABLE 1) (BOT) (NIL) (BOT) (NIL) (TRYABLE 2) (TRYABLE 2) (ZERO)
+ (TRYABLE 1) (TRYABLE 6) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7) (TRYABLE 2)
+ (TRYABLE 2) (TRYABLE 3) (TRYABLE 2) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5)
+ (TRYABLE 6) (TRYABLE 0) (TRYABLE 0) (+ (+ (ZERO) (ZERO)) (ZERO)) (TRYABLE 2)
+ (TRYABLE 4) (TRYABLE 5) (TRYABLE 4) (TRYABLE 5) (TRYABLE 3) (TRYABLE 1)
+ (TRYABLE 3) (TRYABLE 2) (BOT) (TRYABLE 5) (BOT) (TRYABLE 5) (NUM (TRYABLE 3))
+ (TRYABLE 2) (ZERO) (TRYABLE 2) (TRYABLE 3) (TRYABLE 6) (TRYABLE 4) (TRYABLE 6)
+ (TRYABLE 1) (TRYABLE 1) (+ (ZERO) (ZERO)) (TRYABLE 1) (BOT) (TRYABLE 4) (BOT)
+ (TRYABLE 4) (BOT))
+#+end_src
+
+#+begin_src lisp :load no
+(def lc/cond-par
+  (let ((*eval-toplevel*
+          (make-instance 'genrec::dispatch-eval
+                         :arg-list '(term env)
+                         :dispatch-list
+                         `((ARITH-TERM LC/ARITH-SKELETON ,lc/arith-par)))))
+    (solve-skeleton 'lc/cond-skeleton 'cond-examples-with-env '((bot lc-value)))))
+lc/cond-par
+#+end_src
+
+#+RESULTS:
+#+begin_src lisp :load no
+((TRYABLE 3) (TRYABLE 5) (TRYABLE 5) (TRYABLE 6) (BOT) (TRYABLE 5) (TRYABLE 5)
+ (TRYABLE 6) (TRYABLE 4) (TRYABLE 6) (TRYABLE 2) (TRYABLE 4) (TRYABLE 5)
+ (TRYABLE 6) (TRYABLE 7) (BOT) (TRYABLE 6) (TRYABLE 5) (TRYABLE 7) (TRYABLE 5)
+ (TRYABLE 7) (TRYABLE 1) (ZERO) (TRYABLE 6) (TRYABLE 6) (TRYABLE 3) (BOT)
+ (TRYABLE 6) (TRYABLE 6) (TRYABLE 3) (TRYABLE 4) (TRYABLE 8) (TRYABLE 1)
+ (TRYABLE 3) (TRYABLE 5) (TRYABLE 6) (TRYABLE 7) (TRYABLE 2) (TRYABLE 6)
+ (TRYABLE 5) (TRYABLE 7) (TRYABLE 5) (TRYABLE 7) (TRYABLE 0) (ZERO) (TRYABLE 4)
+ (TRYABLE 5) (TRYABLE 6) (TRYABLE 1) (TRYABLE 5) (TRYABLE 5) (TRYABLE 6)
+ (TRYABLE 4) (TRYABLE 6) (TRYABLE 0) (ZERO) (TRYABLE 3) (TRYABLE 4) (TRYABLE 7)
+ (TRYABLE 0) (TRYABLE 4) (TRYABLE 5) (TRYABLE 7) (TRYABLE 3) (TRYABLE 7)
+ (TRYABLE 1))
+#+end_src
+
+#+begin_src lisp :load no
+(def lc-par
+  (let ((*eval-toplevel*
+          (make-instance 'genrec::dispatch-eval
+                         :arg-list '(term env)
+                         :dispatch-list
+                         `((ARITH-TERM LC/ARITH-SKELETON ,lc/arith-par)))))
+    (solve-skeleton 'lc-skeleton 'lc-examples '((bot lc-value) (clo lc-value) (safe-nth lc-value)
+                                                (cons (list-of lc-value))))))
+lc-par
+#+end_src
+
+#+RESULTS:
+#+begin_src lisp :load no
+((TRYABLE 5) (TRYABLE 6) (TRYABLE 2) (TRYABLE 4) (TRYABLE 3) (TRYABLE 4)
+ (TRYABLE 3) (TRYABLE 5) (TRYABLE 1) (TRYABLE 1) (TRYABLE 1) (BOT)
+ (CONS (TRYABLE 2) (NIL)) (BOT) (NIL) (TRYABLE 1) (TRYABLE 3) (TRYABLE 1)
+ (TRYABLE 4) (BOT) (NIL) (BOT) (CONS (BOT) (NIL)) (TRYABLE 4) (TRYABLE 2)
+ (TRYABLE 0) (SAFE-NTH (ZERO) (NIL)) (TRYABLE 4) (CONS (TRYABLE 2) (TRYABLE 3))
+ (TRYABLE 6) (TRYABLE 7) (TRYABLE 1) (TRYABLE 2) (TRYABLE 1) (TRYABLE 0)
+ (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6) (TRYABLE 0) (TRYABLE 1)
+ (TRYABLE 0) (TRYABLE 3) (TRYABLE 4) (TRYABLE 5) (TRYABLE 4) (TRYABLE 5)
+ (TRYABLE 2) (SAFE-NTH (TRYABLE 3) (TRYABLE 5)) (BOT) (TRYABLE 1) (BOT)
+ (TRYABLE 5) (BOT) (CONS (TRYABLE 0) (CONS (BOT) (TRYABLE 5))) (TRYABLE 0)
+ (SAFE-NTH (ZERO) (NIL)) (CLO (TRYABLE 5) (TRYABLE 3)) (TRYABLE 2) (TRYABLE 3)
+ (CONS (BOT) (TRYABLE 5)) (TRYABLE 3) (TRYABLE 5) (TRYABLE 0) (TRYABLE 2)
+ (CLO (NIL) (BOT)) (TRYABLE 0) (TRYABLE 4) (TRYABLE 6) (TRYABLE 3) (TRYABLE 6)
+ (TRYABLE 1))
+#+end_src
+
+** Monadic Definitional Interpreter
+#+begin_src lisp :load no
+(uiop:define-package #:genrec/experiments/monadic
+    (:mix #:cl #:genrec #:serapeum)
+  (:shadow #:mapply))
+(in-package #:genrec/experiments/monadic)
+(define-adt term
+  (var (index nat))
+  (lam (body term))
+  (app (op term) (arg term))
+  (lit (num nat))
+  (add (l term) (r term))
+  (err (code term)))
+(define-adt value
+  (clo (env (list-of value)) (body term))
+  (num (value nat)))
+(define-adt monad-value
+  (pure (value lcv))
+  (except (code nat)))
+(defun safe-nth (n l)
+  (let ((cons (nthcdr n l)))
+    (if cons (pure (car cons)) (except 0))))
+(setf (get 'safe-nth 'arg-types)
+      (lambda (r)
+        (assert (equal r 'monad-lcv))
+        '(nat (list-of lcv))))
+
+(defproblem meval (term (list-of value)) monad-value
+    (term env)
+  (labels ((bind (monad function)
+             (etypecase monad
+               (pure (funcall function (pure-value monad)))
+               (except monad)))
+           (mapply (op arg)
+             (etypecase op
+               (clo (meval (clo-body op) (cons arg (clo-env op))))
+               (num (except 1))))
+           (meval (term env)
+             (etypecase term
+               (var (safe-nth (var-index term) env))
+               (lam (pure (clo env (lam-body term))))
+               (app (bind (meval (app-op term) env)
+                      (lambda (op)
+                        (bind (meval (app-arg term) env)
+                          (lambda (arg)
+                            (mapply op arg))))))
+               (lit (pure (num (lit-num term))))
+               (add
+                (bind (meval (add-l term) env)
+                  (lambda (l)
+                    (bind (meval (add-r term) env)
+                      (lambda (r)
+                        (etypecase l
+                          (clo (except 2))
+                          (num
+                           (etypecase r
+                             (clo (except 2))
+                             (num (+ (num-value l) (num-value r))))))))))))))
+    (meval term env)))
+
+#+nil (def monad-skeleton)
+
+(def examples
+  (inputs-to-examples
+   #'meval
+   (list (lam (var 0)) nil)
+   (list (lam (var 1)) nil)
+   (list (lam (var 0)) (list (num 1)))
+   (list (lam (var 1)) (list (num 1)))
+   (list (lam (var 1)) (list (clo nil (var 0))))
+   (list (var 0) (list (clo nil (var 0))))
+   (list (var 1) (list (clo nil (var 0))))
+   (list (lam (lam (var 0))) nil)
+   (list (app (lam (var 0)) (lam (var 0))) nil)
+   (list (app (var 0) (var 0)) nil)
+   (list (app (lam (var 0)) (var 0)) nil)
+   (list (app (var 0) (lam (var 0))) nil)
+   (list (app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 0))) nil)
+   (list (app (app (lam (lam (var 0))) (lam (var 1))) (lam (var 0))) nil)
+   (list (app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 1))) nil)
+   (list (app (lam (lam (var 0))) (lam (var 0))) nil)
+   (list (app (lam (lam (var 0))) (lam (var 1))) nil)
+   (list (app (lam (lam (var 1))) (lam (var 0))) nil)
+   (list (lit 0) nil)
+   (list (lit 1) nil)
+   (list (add (lit 0) (lam (var 0))) nil)
+   (list (add (lam (var 0)) (lit 0)) nil)
+   (list (add (lam (var 0)) (lit 2)) nil)
+   (list (add (lit 0) (lam (var 0))) nil)
+   (list (add (lit 2) (lit 0)) nil)
+   (list (add (lit 0) (lit 2)) nil)))
+#+end_src
+
+#+begin_src lisp :load no :result output verbatim
+(solve-skeleton monad-skeleton monad-examples
+                '((safe-nth monad-lcv) (clo lcv) (cons (list-of lcv))))
+#+end_src
