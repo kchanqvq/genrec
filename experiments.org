@@ -917,78 +917,78 @@ lc-par-1
                (CLO (EVAL-TOPLEVEL (CLO-BODY LC-VALUE0) (CLO-ENV LC-VALUE0)))
                (NUM (NUM (+ NAT1 (NUM-VALUE LC-VALUE0))))
                ((EQL BOT) 'BOT)))
-           (ARITH-2 (LC-VALUE2 TERM3 -LIST-OF-LC-VALUE-4)
+           (ARITH-2 (LC-VALUE2 TERM3 LIST-OF-LC-VALUE-4)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE LC-VALUE2
-               (CLO (EVAL-TOPLEVEL TERM3 -LIST-OF-LC-VALUE-4))
+               (CLO (EVAL-TOPLEVEL TERM3 LIST-OF-LC-VALUE-4))
                (NUM
-                (ARITH-1 (EVAL-TOPLEVEL TERM3 -LIST-OF-LC-VALUE-4)
+                (ARITH-1 (EVAL-TOPLEVEL TERM3 LIST-OF-LC-VALUE-4)
                  (NUM-VALUE LC-VALUE2)))
                ((EQL BOT) LC-VALUE2)))
-           (ARITH-EVAL (ARITH-TERM5 -LIST-OF-LC-VALUE-6)
+           (ARITH-EVAL (ARITH-TERM5 LIST-OF-LC-VALUE-6)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE ARITH-TERM5
                (LIT (NUM (LIT-NUM ARITH-TERM5)))
                (ADD
                 (ARITH-2
-                 (EVAL-TOPLEVEL (ADD-R ARITH-TERM5) -LIST-OF-LC-VALUE-6)
-                 (ADD-L ARITH-TERM5) -LIST-OF-LC-VALUE-6))
+                 (EVAL-TOPLEVEL (ADD-R ARITH-TERM5) LIST-OF-LC-VALUE-6)
+                 (ADD-L ARITH-TERM5) LIST-OF-LC-VALUE-6))
                ((EQL BOT) (ARITH-1 'BOT (+ (ZERO) (ZERO))))))
-           (COND-1 (NAT7 TERM8 TERM9 -LIST-OF-LC-VALUE-10)
+           (COND-1 (NAT7 TERM8 TERM9 LIST-OF-LC-VALUE-10)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE NAT7
                ((INTEGER 0 0)
-                (COND-2 (EVAL-TOPLEVEL TERM9 -LIST-OF-LC-VALUE-10) TERM9 TERM8
-                 -LIST-OF-LC-VALUE-10))
+                (COND-2 (EVAL-TOPLEVEL TERM9 LIST-OF-LC-VALUE-10) TERM9 TERM8
+                 LIST-OF-LC-VALUE-10))
                ((AND FIXNUM (INTEGER 1)) 'BOT)))
-           (COND-2 (LC-VALUE11 TERM12 TERM13 -LIST-OF-LC-VALUE-14)
+           (COND-2 (LC-VALUE11 TERM12 TERM13 LIST-OF-LC-VALUE-14)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE LC-VALUE11
                (CLO
                 (COND-2
-                 (EVAL-TOPLEVEL (CLO-BODY LC-VALUE11) -LIST-OF-LC-VALUE-14)
-                 TERM13 TERM12 -LIST-OF-LC-VALUE-14))
+                 (EVAL-TOPLEVEL (CLO-BODY LC-VALUE11) LIST-OF-LC-VALUE-14)
+                 TERM13 TERM12 LIST-OF-LC-VALUE-14))
                (NUM
                 (COND-2
                  (COND-1 (NUM-VALUE LC-VALUE11) TERM12 TERM13
-                  -LIST-OF-LC-VALUE-14)
-                 TERM13 TERM12 -LIST-OF-LC-VALUE-14))
-               ((EQL BOT) (EVAL-TOPLEVEL TERM13 -LIST-OF-LC-VALUE-14))))
-           (COND-EVAL (COND-TERM15 -LIST-OF-LC-VALUE-16)
+                  LIST-OF-LC-VALUE-14)
+                 TERM13 TERM12 LIST-OF-LC-VALUE-14))
+               ((EQL BOT) (EVAL-TOPLEVEL TERM13 LIST-OF-LC-VALUE-14))))
+           (COND-EVAL (COND-TERM15 LIST-OF-LC-VALUE-16)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE COND-TERM15
                (IFZ
                 (COND-2
-                 (EVAL-TOPLEVEL (IFZ-TEST COND-TERM15) -LIST-OF-LC-VALUE-16)
+                 (EVAL-TOPLEVEL (IFZ-TEST COND-TERM15) LIST-OF-LC-VALUE-16)
                  (IFZ-ELSE COND-TERM15) (IFZ-THEN COND-TERM15)
-                 -LIST-OF-LC-VALUE-16))))
+                 LIST-OF-LC-VALUE-16))))
            (LC-1 (LC-VALUE17 LC-VALUE18)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE LC-VALUE17
                (CLO LC-VALUE17)
                (NUM (CLO 'NIL 'BOT))
                ((EQL BOT) LC-VALUE17)))
-           (LC-2 (LC-VALUE19 TERM20 -LIST-OF-LC-VALUE-21)
+           (LC-2 (LC-VALUE19 TERM20 LIST-OF-LC-VALUE-21)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE LC-VALUE19
                (CLO
                 (LC-2 (SAFE-NTH (ZERO) 'NIL) (CLO-BODY LC-VALUE19)
-                 (CONS (EVAL-TOPLEVEL TERM20 -LIST-OF-LC-VALUE-21)
-                       -LIST-OF-LC-VALUE-21)))
+                 (CONS (EVAL-TOPLEVEL TERM20 LIST-OF-LC-VALUE-21)
+                       LIST-OF-LC-VALUE-21)))
                (NUM 'BOT)
-               ((EQL BOT) (EVAL-TOPLEVEL TERM20 -LIST-OF-LC-VALUE-21))))
-           (LC-EVAL (LC-TERM22 -LIST-OF-LC-VALUE-23)
+               ((EQL BOT) (EVAL-TOPLEVEL TERM20 LIST-OF-LC-VALUE-21))))
+           (LC-EVAL (LC-TERM22 LIST-OF-LC-VALUE-23)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE LC-TERM22
-               (VAR (SAFE-NTH (VAR-INDEX LC-TERM22) -LIST-OF-LC-VALUE-23))
+               (VAR (SAFE-NTH (VAR-INDEX LC-TERM22) LIST-OF-LC-VALUE-23))
                (LAM
-                (LC-1 (CLO -LIST-OF-LC-VALUE-23 (LAM-BODY LC-TERM22))
-                 (EVAL-TOPLEVEL (LAM-BODY LC-TERM22) -LIST-OF-LC-VALUE-23)))
+                (LC-1 (CLO LIST-OF-LC-VALUE-23 (LAM-BODY LC-TERM22))
+                 (EVAL-TOPLEVEL (LAM-BODY LC-TERM22) LIST-OF-LC-VALUE-23)))
                (APP
                 (LC-2
                  (EVAL-TOPLEVEL (APP-OP LC-TERM22)
-                  (CONS (CLO 'NIL 'BOT) -LIST-OF-LC-VALUE-23))
-                 (APP-ARG LC-TERM22) -LIST-OF-LC-VALUE-23))))
+                  (CONS (CLO 'NIL 'BOT) LIST-OF-LC-VALUE-23))
+                 (APP-ARG LC-TERM22) LIST-OF-LC-VALUE-23))))
            (EVAL-TOPLEVEL (TERM ENV)
              (ETYPECASE TERM
                (ARITH-TERM (ARITH-EVAL TERM ENV))
@@ -1343,7 +1343,7 @@ exc-par
                (CLO (EVAL-TOPLEVEL (CLO-BODY VALUE0) (CLO-ENV VALUE0)))
                (NUM (EVAL-TOPLEVEL (LIT (+ NAT1 (NUM-VALUE VALUE0))) 'NIL))
                (ERV VALUE0)))
-           (ARITH-2 (VALUE2 TERM3 -LIST-OF-VALUE-4)
+           (ARITH-2 (VALUE2 TERM3 LIST-OF-VALUE-4)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE VALUE2
                (CLO
@@ -1353,38 +1353,38 @@ exc-par
                   (ZERO))
                  (ZERO)))
                (NUM
-                (ARITH-1 (EVAL-TOPLEVEL TERM3 -LIST-OF-VALUE-4)
+                (ARITH-1 (EVAL-TOPLEVEL TERM3 LIST-OF-VALUE-4)
                  (NUM-VALUE VALUE2)))
                (ERV VALUE2)))
-           (ARITH-EVAL (ARITH-TERM5 -LIST-OF-VALUE-6)
+           (ARITH-EVAL (ARITH-TERM5 LIST-OF-VALUE-6)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE ARITH-TERM5
                (LIT (NUM (LIT-NUM ARITH-TERM5)))
                (ADD
-                (ARITH-2 (EVAL-TOPLEVEL (ADD-L ARITH-TERM5) -LIST-OF-VALUE-6)
-                 (ADD-R ARITH-TERM5) -LIST-OF-VALUE-6))))
-           (COND-1 (NAT7 TERM8 TERM9 -LIST-OF-VALUE-10)
+                (ARITH-2 (EVAL-TOPLEVEL (ADD-L ARITH-TERM5) LIST-OF-VALUE-6)
+                 (ADD-R ARITH-TERM5) LIST-OF-VALUE-6))))
+           (COND-1 (NAT7 TERM8 TERM9 LIST-OF-VALUE-10)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE NAT7
-               ((INTEGER 0 0) (EVAL-TOPLEVEL TERM8 -LIST-OF-VALUE-10))
+               ((INTEGER 0 0) (EVAL-TOPLEVEL TERM8 LIST-OF-VALUE-10))
                ((AND FIXNUM (INTEGER 1))
-                (COND-2 (COND-1 (1- NAT7) TERM8 TERM9 -LIST-OF-VALUE-10) TERM9
-                 TERM9 -LIST-OF-VALUE-10))))
-           (COND-2 (VALUE11 TERM12 TERM13 -LIST-OF-VALUE-14)
+                (COND-2 (COND-1 (1- NAT7) TERM8 TERM9 LIST-OF-VALUE-10) TERM9
+                 TERM9 LIST-OF-VALUE-10))))
+           (COND-2 (VALUE11 TERM12 TERM13 LIST-OF-VALUE-14)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE VALUE11
                (CLO (ERV (ZERO)))
                (NUM
-                (COND-1 (NUM-VALUE VALUE11) TERM12 TERM13 -LIST-OF-VALUE-14))
-               (ERV (EVAL-TOPLEVEL TERM13 -LIST-OF-VALUE-14))))
-           (COND-EVAL (COND-TERM15 -LIST-OF-VALUE-16)
+                (COND-1 (NUM-VALUE VALUE11) TERM12 TERM13 LIST-OF-VALUE-14))
+               (ERV (EVAL-TOPLEVEL TERM13 LIST-OF-VALUE-14))))
+           (COND-EVAL (COND-TERM15 LIST-OF-VALUE-16)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE COND-TERM15
                (IFZ
                 (COND-2
-                 (EVAL-TOPLEVEL (IFZ-TEST COND-TERM15) -LIST-OF-VALUE-16)
+                 (EVAL-TOPLEVEL (IFZ-TEST COND-TERM15) LIST-OF-VALUE-16)
                  (IFZ-THEN COND-TERM15) (IFZ-ELSE COND-TERM15)
-                 -LIST-OF-VALUE-16))))
+                 LIST-OF-VALUE-16))))
            (LC-1 (VALUE17 VALUE18)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE VALUE17
@@ -1393,41 +1393,41 @@ exc-par
                  (CONS VALUE18 (CLO-ENV VALUE17))))
                (NUM (ERV (SUCC (ZERO))))
                (ERV VALUE18)))
-           (LC-2 (VALUE19 TERM20 -LIST-OF-VALUE-21)
+           (LC-2 (VALUE19 TERM20 LIST-OF-VALUE-21)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE VALUE19
-               (CLO (EVAL-TOPLEVEL TERM20 -LIST-OF-VALUE-21))
-               (NUM (SAFE-NTH (NUM-VALUE VALUE19) -LIST-OF-VALUE-21))
+               (CLO (EVAL-TOPLEVEL TERM20 LIST-OF-VALUE-21))
+               (NUM (SAFE-NTH (NUM-VALUE VALUE19) LIST-OF-VALUE-21))
                (ERV VALUE19)))
-           (LC-EVAL (LC-TERM22 -LIST-OF-VALUE-23)
+           (LC-EVAL (LC-TERM22 LIST-OF-VALUE-23)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE LC-TERM22
                (VAR
                 (LC-2
-                 (EVAL-TOPLEVEL (LIT (VAR-INDEX LC-TERM22)) -LIST-OF-VALUE-23)
-                 (LIT (SUCC (VAR-INDEX LC-TERM22))) -LIST-OF-VALUE-23))
+                 (EVAL-TOPLEVEL (LIT (VAR-INDEX LC-TERM22)) LIST-OF-VALUE-23)
+                 (LIT (SUCC (VAR-INDEX LC-TERM22))) LIST-OF-VALUE-23))
                (LAM
                 (LC-1 (ERV (ZERO))
-                 (CLO -LIST-OF-VALUE-23 (LAM-BODY LC-TERM22))))
+                 (CLO LIST-OF-VALUE-23 (LAM-BODY LC-TERM22))))
                (APP
-                (LC-1 (EVAL-TOPLEVEL (APP-OP LC-TERM22) -LIST-OF-VALUE-23)
-                 (LC-2 (EVAL-TOPLEVEL (APP-OP LC-TERM22) -LIST-OF-VALUE-23)
-                  (APP-ARG LC-TERM22) -LIST-OF-VALUE-23)))))
-           (EXC-1 (VALUE24 TERM25 -LIST-OF-VALUE-26)
+                (LC-1 (EVAL-TOPLEVEL (APP-OP LC-TERM22) LIST-OF-VALUE-23)
+                 (LC-2 (EVAL-TOPLEVEL (APP-OP LC-TERM22) LIST-OF-VALUE-23)
+                  (APP-ARG LC-TERM22) LIST-OF-VALUE-23)))))
+           (EXC-1 (VALUE24 TERM25 LIST-OF-VALUE-26)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE VALUE24
-               (CLO (EVAL-TOPLEVEL TERM25 -LIST-OF-VALUE-26))
-               (NUM (EXC-1 (ERV (NUM-VALUE VALUE24)) TERM25 -LIST-OF-VALUE-26))
+               (CLO (EVAL-TOPLEVEL TERM25 LIST-OF-VALUE-26))
+               (NUM (EXC-1 (ERV (NUM-VALUE VALUE24)) TERM25 LIST-OF-VALUE-26))
                (ERV
-                (EVAL-TOPLEVEL (LIT (ERV-CODE VALUE24)) -LIST-OF-VALUE-26))))
-           (EXC-EVAL (EXC-TERM27 -LIST-OF-VALUE-28)
+                (EVAL-TOPLEVEL (LIT (ERV-CODE VALUE24)) LIST-OF-VALUE-26))))
+           (EXC-EVAL (EXC-TERM27 LIST-OF-VALUE-28)
              (GENREC::CHECK-RESOURCE-LIMIT)
              (ETYPECASE EXC-TERM27
                (ERR (ERV (ERR-CODE EXC-TERM27)))
                (HANDLE
                 (EXC-1
-                 (EVAL-TOPLEVEL (HANDLE-TRYER EXC-TERM27) -LIST-OF-VALUE-28)
-                 (HANDLE-CATCHER EXC-TERM27) -LIST-OF-VALUE-28))))
+                 (EVAL-TOPLEVEL (HANDLE-TRYER EXC-TERM27) LIST-OF-VALUE-28)
+                 (HANDLE-CATCHER EXC-TERM27) LIST-OF-VALUE-28))))
            (EVAL-TOPLEVEL (TERM ENV)
              (ETYPECASE TERM
                (ARITH-TERM (ARITH-EVAL TERM ENV))

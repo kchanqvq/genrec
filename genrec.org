@@ -524,13 +524,15 @@ At evaluation time, this computes a value from `%par%' variable and the lexicall
                 :function *function-index*)
      *holes*)))
 (defun gensym-1 (thing)
-  (gensym (coerce
-           (mapcan (lambda (c)
-                     (cond ((alpha-char-p c) (list c))
-                           ((alphanumericp c) nil)
-                           (t (list #\-))))
-                   (coerce (format nil "~a" thing) 'list))
-           'string)))
+  (gensym (string-trim
+           "-"
+           (coerce
+            (mapcan (lambda (c)
+                      (cond ((alpha-char-p c) (list c))
+                            ((alphanumericp c) nil)
+                            (t (list #\-))))
+                    (coerce (format nil "~a" thing) 'list))
+            'string))))
 (defmacro with-tryables (exprs-and-types &body body)
   "`exprs-and-types' should be of the form `((expr type) ...)'.
 Make `expr' tryable for `hole' forms in `body'."
