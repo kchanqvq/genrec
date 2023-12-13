@@ -607,7 +607,7 @@ Pre-freezing is now necessary to solve the first strata (=arith= strata).
 lc/arith-par
 #+end_src
 
-#+RESULTS
+#+RESULTS:
 #+begin_src lisp :load no
 ((TRYABLE 2) (TRYABLE 6) (TRYABLE 0) (TRYABLE 4) (TRYABLE 3) (TRYABLE 4)
  (TRYABLE 3) (TRYABLE 5) (TRYABLE 4) (TRYABLE 5) (TRYABLE 0) (BOT) (NIL) (BOT)
@@ -903,7 +903,7 @@ lc-par-1
  (CONS (CLO (NIL) (BOT)) (TRYABLE 6)) (TRYABLE 1))
 #+end_src
 
-#+begin_src lisp :load no :results output code
+#+begin_src lisp :load no :results output code :exports both
 (print-skeleton lc-skeleton lc-par-1)
 #+end_src
 
@@ -1328,7 +1328,7 @@ exc-par
  (TRYABLE 5) (TRYABLE 0))
 #+end_src
 
-#+begin_src lisp :load no :results output code
+#+begin_src lisp :load no :results output code :exports both
 (print-skeleton skeleton exc-par)
 #+end_src
 
