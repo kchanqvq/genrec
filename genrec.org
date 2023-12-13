@@ -85,7 +85,9 @@ The export procedure may produce invalid output for non-idiomatic use of src_lis
            #:defproblem #:inputs-to-examples
            #:call-skeleton #:print-skeleton
            #:deploy-aws-lambda
-           #:stratified-solve)
+           #:stratified-solve
+           #:fully-connected-skeleton
+           #:call-graph-skeleton)
   (:shadowing-import-from #:metabang-bind #:bind)
   (:import-from :serapeum #:defsubst #:defvar-unbound #:eval-always #:ensure)
   #-aws-lambda (:import-from :blackbird #:alet #:catcher)
@@ -547,16 +549,18 @@ Make `expr' tryable for `hole' forms in `body'."
          (with-tryables* ,(cdr exprs-and-types)
            ,@body))
       `(progn ,@body)))
+(defmacro letrec (bindings &body body)
+  `(let ,(mapcar #'car bindings)
+     ,@ (mapcar (lambda (b) `(setq ,@b)) bindings)
+     ,@body))
 (defmacro with-tryables-rec (exprs-and-types &body body)
   (bind ((exprs (mapcar #'car exprs-and-types))
          (types (mapcar #'cadr exprs-and-types))
          (vars (mapcar #'gensym-1 types)))
-    `(let ,vars
-       (compiler-let
-           ((*tryable-vars* ',(append vars *tryable-vars*))
-            (*tryable-types* ',(append types *tryable-types*)))
-         ,@ (mapcar (lambda (var expr) `(setq ,var ,expr)) vars exprs)
-         ,@body))))
+    `(compiler-let
+         ((*tryable-vars* ',(append vars *tryable-vars*))
+          (*tryable-types* ',(append types *tryable-types*)))
+       (letrec ,(mapcar #'list vars exprs) ,@body))))
 (defun add-library-function (name return-type)
   "Add library function to `*library-table*' at evaluation time."
   (push name (gethash return-type *library-table*)))
@@ -628,6 +632,7 @@ The following ~macroexpand-till~ is an even smarter variation. It performs just 
 
 (defun macroexpand-till (form predicate &optional env)
   "Expand enough macros in form to expose expansions of every subform satisfying `predicate'."
+  (setq form (copy-tree form)) ;; Remove any structural sharing
   (bind ((expansion-alist (collect-expansion-alist form env))
          (selected-expansions
           (remove-if-not (lambda (subst)
@@ -664,12 +669,24 @@ It is especially useful to expand the skeletons enough so that we can see all ho
                      (mapcar #'process term))
                  term)))
     (process term)))
+(defun normalize-const-constructors (term)
+  "Replace zero-arity constructors like `(c)' with `(quote c)'."
+  (labels ((process (term)
+             (if (consp term)
+                 (if (and (not (cdr term))
+                          (not (fboundp (car term))))
+                     (list 'quote (car term))
+                     (mapcar #'process term))
+                 term)))
+    (process term)))
 (defun substitute-holes (form par)
   "Instantiate hole terms of the form `(hole-1 n ...)' according to parameter sequence `par'."
   (labels ((process (form)
              (if (consp form)
                  (if (eq (car form) 'hole-1)
-                     (substitute-tryables (nth (cadr form) par) (cddr form))
+                     (substitute-tryables
+                      (normalize-const-constructors (nth (cadr form) par))
+                      (cddr form))
                      (mapcar #'process form))
                  form)))
     (process form)))
@@ -679,17 +696,42 @@ The output of macroexpansion are sometimes quite verbose and hard to read. The f
 - Remove =compiler-let=, which are no-op after macroexpansion phase.
 - Remove unnecessary =progn=.
 - Merge consecutive nested =let='s into =let*=.
+- Substitute in let bindings.
 #+begin_src lisp
 (defun simplify-cl (form)
   "Simplify Common Lisp code `form' for readability."
-  (labels ((process (form)
+  (labels ((expand-binding-p (binding)
+             #+nil (and (listp binding)
+                        (symbolp (cadr binding)))
+             (declare (ignore binding))
+             t)
+           (process (form)
              (t:match form
                ((list* 'compiler-let _ body) (process (cons 'progn body)))
                ((list 'progn expr) (process expr))
                ((list 'let nil expr)
                 (process expr))
                ((list 'let bindings (cons 'progn body))
-                (list* 'let bindings body))
+                (process (list* 'let bindings body)))
+               ((list 'let bindings expr)
+                (bind (((:values subst kept)
+                        (s:partition #'expand-binding-p bindings))
+                       (alist (mapcar (lambda (b) (cons (car b) (cadr b))) subst))
+                       (expr (process (sublis alist expr))))
+                  (if kept (list 'let kept expr) expr)))
+               ((list 'letrec bindings expr)
+                (bind ((alist
+                        (mapcar (t:lambda-match
+                                  ((list var (list 'delay expr))
+                                   (cons var expr))
+                                  ((list var expr)
+                                   (cons var expr)))
+                                bindings)))
+                  (iter (for old-expr = expr)
+                    (for i below 5)
+                    (setq expr (sublis alist expr))
+                    (until (equal old-expr expr)))
+                 (process expr)))
                ((list 'let (list binding) expr)
                 (t:match (process expr)
                   ((list* 'let* bindings body)
@@ -711,17 +753,18 @@ Finally, putting all the pieces together, we have a pretty printer for skeletons
   (let ((*gensym-counter* 0)
         (*print-circle* nil)
         (*print-gensym* nil))
-    (print (substitute-holes
-            (simplify-cl
+    (print (simplify-cl
+            (substitute-holes
              (macroexpand-till (skeleton-source skeleton)
                                (lambda (form) (member (car form)
                                                       '(hole with-tryables with-tryables*
-                                                        with-tryables-rec)))))
-            par))
+                                                        with-tryables-rec))))
+             par)))
     (values)))
 #+end_src
 
-*** Single-dispatch function population
+*** Call graph of Single dispatch functions
+
 A set of mutually recursive function, each dispatching on their first argument.
 #+begin_src lisp
 (defvar *dispatch-1-default-clauses* nil)
@@ -773,20 +816,37 @@ A set of mutually recursive function, each dispatching on their first argument.
                                         callable-function-types)
                                (hole ,output-type))))
                          (constructors dispatch-type))))))))
-(defmacro population-skeleton (&rest types)
-  (bind ((main-type (lastcar types))
-         (function-names (make-gensym-list (length types) "F")))
-        `(with-skeleton (:type ,main-type :lazy-evaluation-p t)
-           (labels
-               ,(mapcar (curry #'single-dispatch-function-binding function-names types)
-                        function-names types (iota (length types)))
-             ,@(mapcar (lambda (name) `(setf (symbol-function ',name) #',name)) function-names)
-             ,@(mapcar (lambda (name type) `(setf (get ',name 'arg-types) ',(cadr type)))
-                       function-names types)
-             (list ,@(mapcar (lambda (s) `#',s) function-names))))))
 #+end_src
 
-*** Interpreter Skeleton (Single-dispatch function population with open recursion)
+#+begin_src lisp
+(defmacro call-graph-skeleton (&rest clauses)
+  "Each of `clauses' must have the form `(name type . callable-functions)'.
+Special case: if a clause is of the form  `(name type :code arg-list . body)',
+a function with `arg-list' and `body' is generated verbatim."
+  `(with-skeleton (:type ,(cadr (lastcar clauses)) :lazy-evaluation-p t)
+     (labels
+         ,(iter
+            (for (name type . callable-functions) in clauses)
+            (for i from 0)
+            (collect
+                (if (eq (car callable-functions) :code)
+                    (cons name (cdr callable-functions))
+                    (single-dispatch-function-binding
+                     callable-functions
+                     (mapcar (lambda (f) (cadr (assoc f clauses)))
+                             callable-functions)
+                     name type i))))
+       (list ,@(iter (for (name) in clauses) (collect `#',name))))))
+(defmacro fully-connected-skeleton (&rest types)
+  (bind ((function-names (make-gensym-list (length types) "F")))
+    `(call-graph-skeleton
+      ,@ (iter
+           (for name in function-names)
+           (for type in types)
+           (collect `(,name ,type ,@function-names))))))
+#+end_src
+
+*** Interpreter Skeleton (Fully connected Single-dispatch functions with open recursion)
 #+begin_src lisp
 (defvar *eval-toplevel* nil)
 (defun convert-toplevel-function-binding (binding)
@@ -1727,8 +1787,9 @@ We could have defined ~boolean~ with ~define-adt~, but ~boolean~ is a symbol fro
      (pushnew ',name *problems*)
      (setf (get ',name :type) '(function ,argument-types ,result-type))
      (defun ,name ,args ,@body)))
-(defun inputs-to-examples (reference &rest inputs)
-  (mapcar (lambda (input) (list input (apply reference input))) inputs))
+(defmacro inputs-to-examples (reference &body inputs)
+  `(list
+    ,@ (mapcar (lambda (input) `(list (list ,@input) (,reference ,@input))) inputs)))
 #+end_src
 
 * Emacs Support
@@ -1929,6 +1990,7 @@ Disable leading indentation to ensure ~beginning-of-defun~ and ~end-of-defun~ wo
 # org-edit-src-content-indentation: 0
 # org-adapt-indentation: nil
 # org-export-use-babel: nil
+# org-hide-emphasis-markers: nil
 # org-link-abbrev-alist: (("wiki" . "https://en.wikipedia.org/wiki/"))
 # org-html-htmlize-output-type: css
 # End:

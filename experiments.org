@@ -18,7 +18,7 @@
    (function (nat nat) nat)
    nat nat nat))
 (def nat-skeleton
-  (population-skeleton
+  (fully-connected-skeleton
    (function (nat nat) nat)
    (function (nat nat) nat)))
 (def nat-examples
@@ -55,28 +55,27 @@
                    (lc (app-arg lc) env)))
     (lam (clo env (lam-body lc)))))
 (def lc-examples
-  (inputs-to-examples
-   #'lc
-   (list (lam (var 0)) nil)
-   (list (lam (var 1)) nil)
-   (list (lam (var 0)) (list 'bot))
-   (list (lam (var 1)) (list 'bot))
-   (list (lam (var 1)) (list (clo nil (var 0))))
-   (list (var 0) (list (clo nil (var 0))))
-   (list (var 1) (list (clo nil (var 0))))
-   (list (lam (lam (var 0))) nil)
-   (list (app (lam (var 0)) (lam (var 0))) nil)
-   (list (app (var 0) (var 0)) nil)
-   (list (app (lam (var 0)) (var 0)) nil)
-   (list (app (var 0) (lam (var 0))) nil)
-   (list (app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 0))) nil)
-   (list (app (app (lam (lam (var 0))) (lam (var 1))) (lam (var 0))) nil)
-   (list (app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 1))) nil)
-   (list (app (lam (lam (var 0))) (lam (var 0))) nil)
-   (list (app (lam (lam (var 0))) (lam (var 1))) nil)
-   (list (app (lam (lam (var 1))) (lam (var 0))) nil)))
+  (inputs-to-examples lc
+    ((lam (var 0)) nil)
+    ((lam (var 1)) nil)
+    ((lam (var 0)) (list 'bot))
+    ((lam (var 1)) (list 'bot))
+    ((lam (var 1)) (list (clo nil (var 0))))
+    ((var 0) (list (clo nil (var 0))))
+    ((var 1) (list (clo nil (var 0))))
+    ((lam (lam (var 0))) nil)
+    ((app (lam (var 0)) (lam (var 0))) nil)
+    ((app (var 0) (var 0)) nil)
+    ((app (lam (var 0)) (var 0)) nil)
+    ((app (var 0) (lam (var 0))) nil)
+    ((app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 0))) nil)
+    ((app (app (lam (lam (var 0))) (lam (var 1))) (lam (var 0))) nil)
+    ((app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 1))) nil)
+    ((app (lam (lam (var 0))) (lam (var 0))) nil)
+    ((app (lam (lam (var 0))) (lam (var 1))) nil)
+    ((app (lam (lam (var 1))) (lam (var 0))) nil)))
 (def lc-skeleton
-  (population-skeleton
+  (fully-connected-skeleton
    (function (lcv lcv) lcv)
    (function (lcv lc (list-of lcv)) lcv)
    (function (lc (list-of lcv)) lcv)))
@@ -88,7 +87,7 @@ The following experiments are run with =*restart*= is set to 1M proposals (which
 
 #+begin_src lisp :load no :results output verbatim
 (def lc-skeleton
-  (population-skeleton
+  (fully-connected-skeleton
    (function (lcv lcv) lcv)
    (function (lc (list-of lcv)) lcv)))
 (with-profiling
@@ -178,7 +177,7 @@ The following experiments are run with =*restart*= is set to 1M proposals (which
   <INFO> [11:50:59] genrec - Profiling ended. 61539 programs, 48034 accepted, 1107702 evaluations, 2046 evaluation errors, 2.271 s real time, 27098.9 p/s, 487779.3 e/s.
 #+end_example
 
-Curiously, using a =nested-dispatch-skeleton= roughly equivalent to an "inlined" version of the above =population-skeleton= also solves the problem, but in very consistent time (10K~20K accepted proposals).
+Curiously, using a =nested-dispatch-skeleton= roughly equivalent to an "inlined" version of the above =fully-connected-skeleton= also solves the problem, but in very consistent time (10K~20K accepted proposals).
 #+begin_src lisp :load no :results output verbatim
 (def lc-skeleton
   (nested-dispatch-skeleton
@@ -273,7 +272,7 @@ Curiously, using a =nested-dispatch-skeleton= roughly equivalent to an "inlined"
 
 #+begin_src lisp :load no :results output verbatim
 (def lc-skeleton
-  (population-skeleton
+  (fully-connected-skeleton
    (function ((list-of lcv) lcv lc) lcv)
    (function (lc (list-of lcv) lcv) lcv)
    (function (lcv lc (list-of lcv)) lcv)
@@ -296,7 +295,9 @@ Attempted ideas:
   - The roadblock is likely the size of the skeleton for the full interpreter (6 helper functions + 1 entry eval function for arith+cond+lc). Even if unneeded functions are frozen, the changeable holes can still call them, and that just introduce too much noise to the search procedures (too easy to get trivial values).
 #+begin_src lisp
 (uiop:define-package #:genrec/experiments/interpreter
-    (:mix #:cl #:genrec #:serapeum #:iter))
+    (:mix #:cl #:genrec #:serapeum)
+  (:export
+   #:safe-nth))
 (in-package #:genrec/experiments/interpreter)
 #+end_src
 *** Arithmetic
@@ -320,34 +321,32 @@ Attempted ideas:
                'bot)))
     ((eql bot) 'bot)))
 (def arith-examples
-  (inputs-to-examples
-   #'arith-eval
-   (list (lit 0))
-   (list (lit 1))
-   (list 'bot)
-   (list (add (lit 0) 'bot))
-   (list (add 'bot (lit 0)))
-   (list (add 'bot (lit 2)))
-   (list (add (lit 0) 'bot))
-   (list (add (lit 2) (lit 0)))
-   (list (add (lit 0) (lit 2)))
-   (list (add (lit 1) (lit 2)))))
+  (inputs-to-examples arith-eval
+    ((lit 0))
+    ((lit 1))
+    ('bot)
+    ((add (lit 0) 'bot))
+    ((add 'bot (lit 0)))
+    ((add 'bot (lit 2)))
+    ((add (lit 0) 'bot))
+    ((add (lit 2) (lit 0)))
+    ((add (lit 0) (lit 2)))
+    ((add (lit 1) (lit 2)))))
 (def arith-examples-more
-  (inputs-to-examples
-   #'arith-eval
-   (list (lit 0))
-   (list (lit 1))
-   (list 'bot)
-   (list (add (lit 0) 'bot))
-   (list (add 'bot (lit 0)))
-   (list (add 'bot (lit 2)))
-   (list (add (lit 0) (lit 2)))
-   (list (add (lit 2) (lit 0)))
-   (list (add (lit 0) (lit 0)))
-   (list (lit 2))
-   (list (lit 3))
-   (list (add (lit 2) (lit 2)))
-   (list (add (lit 5) (lit 3)))))
+  (inputs-to-examples arith-eval
+   ((lit 0))
+   ((lit 1))
+   ('bot)
+   ((add (lit 0) 'bot))
+   ((add 'bot (lit 0)))
+   ((add 'bot (lit 2)))
+   ((add (lit 0) (lit 2)))
+   ((add (lit 2) (lit 0)))
+   ((add (lit 0) (lit 0)))
+   ((lit 2))
+   ((lit 3))
+   ((add (lit 2) (lit 2)))
+   ((add (lit 5) (lit 3)))))
 (def arith-library '((+ nat) (num arith-value) (bot arith-value)))
 #+end_src
 
@@ -355,18 +354,31 @@ Sanity check: The following should be solved with ease (less than 256 searches s
 Note that this only works after replacing the recursive references =term='s in =(define-adt arith-term ...)= with =arith-term=.
 #+begin_src lisp :load no
 (def arith-skeleton-1
-  (population-skeleton
+  (fully-connected-skeleton
    (function (arith-value nat) arith-value)
    (function (arith-value arith-term) arith-value)
    (function (arith-term) arith-value)))
 #+end_src
 
 #+begin_src lisp
-  (def arith-skeleton
+(def arith-skeleton-1
+  (fully-connected-skeleton
+   (function (arith-value nat) arith-value)
+   (function (arith-value term) arith-value)
+   (function (term) arith-value)))
+  #+nil  (def arith-skeleton
     (interpreter-skeleton term
       (function (arith-value nat) arith-value)
       (function (arith-value term) arith-value)
       (function (arith-term) arith-value)))
+(def arith-skeleton
+  (call-graph-skeleton
+   (arith-1 (function (arith-value nat) arith-value)
+            arith-1 arith-2 eval-toplevel)
+   (arith-2 (function (arith-value term) arith-value)
+            arith-1 arith-2 eval-toplevel)
+   (eval-toplevel (function (term) arith-value)
+                  arith-1 arith-2 eval-toplevel)))
 #+end_src
 
 *** Conditional
@@ -391,57 +403,88 @@ Note that this only works after replacing the recursive references =term='s in =
              (t 'bot))))
     ((eql bot) 'bot)))
 (def cond-examples
-  (inputs-to-examples
-   #'cond-eval
-   (list (ifz (lit 0) (lit 0) (lit 2)))
-   (list (ifz (lit 1) (lit 0) (lit 2)))
-   (list (ifz (lit 0) (add (lit 0) (lit 2)) (lit 0)))
-   (list (ifz (lit 0) (add (lit 1) (lit 2)) (lit 0)))
-   (list (ifz (lit 0) 'bot 'bot))
-   (list (ifz (lit 1) (lit 0) (add (lit 0) (lit 2))))
-   (list (ifz (lit 1) (lit 0) (add (lit 1) (lit 2))))
-   (list (ifz (lit 1) 'bot 'bot))))
-(def cond-skeleton
+  (inputs-to-examples cond-eval
+   ((ifz (lit 0) (lit 0) (lit 2)))
+   ((ifz (lit 1) (lit 0) (lit 2)))
+   ((ifz (lit 0) (add (lit 0) (lit 2)) (lit 0)))
+   ((ifz (lit 0) (add (lit 1) (lit 2)) (lit 0)))
+   ((ifz (lit 0) 'bot 'bot))
+   ((ifz (lit 1) (lit 0) (add (lit 0) (lit 2))))
+   ((ifz (lit 1) (lit 0) (add (lit 1) (lit 2))))
+   ((ifz (lit 1) 'bot 'bot))))
+#+nil (def cond-skeleton
   (interpreter-skeleton term
     (function (nat term term) arith-value)
     (function (arith-value term term) arith-value)
     (function (cond-term) arith-value)))
+(def cond-skeleton
+  (call-graph-skeleton
+   (arith-1 (function (arith-value nat) arith-value)
+            arith-1 arith-2 eval-toplevel)
+   (arith-2 (function (arith-value term) arith-value)
+            arith-1 arith-2 eval-toplevel)
+   (arith-eval (function (arith-term) arith-value)
+               arith-1 arith-2 eval-toplevel)
+   (cond-1 (function (nat term term) arith-value)
+           cond-1 cond-2 eval-toplevel)
+   (cond-2 (function (arith-value term term) arith-value)
+           cond-1 cond-2 eval-toplevel)
+   (cond-eval (function (cond-term) arith-value)
+              cond-1 cond-2 eval-toplevel)
+   (eval-toplevel (function (term) arith-value)
+                  :code (term)
+                  (etypecase term
+                    (arith-term (arith-eval term))
+                    (cond-term (cond-eval term))))))
 (def cond-library arith-library)
 #+end_src
 
+This is solved (specificially the =arith= strata) without pre-freezing:
 #+begin_src lisp :load no
-(genrec::stratified-solve 'cond-skeleton
-                            '(arith-examples cond-examples)
-                            'cond-library
-                            '((0 1) ()))
+(def cond/arith-par (solve-skeleton 'cond-skeleton 'arith-examples arith-library))
+cond/arith-par
 #+end_src
 
 #+RESULTS:
 #+begin_src lisp :load no
-((+ (TRYABLE 5) (TRYABLE 5)) (TRYABLE 7) (TRYABLE 7) (BOT) (TRYABLE 6)
- (TRYABLE 6) (TRYABLE 0) (TRYABLE 5) (TRYABLE 2) (TRYABLE 7) (TRYABLE 6) (BOT)
- (TRYABLE 6) (TRYABLE 7) (TRYABLE 8) (NUM (+ (ZERO) (ZERO))) (TRYABLE 8)
- (TRYABLE 7) (TRYABLE 4) (TRYABLE 5) (TRYABLE 1) (TRYABLE 8) (TRYABLE 8)
- (TRYABLE 4) (+ (TRYABLE 5) (TRYABLE 5)) (TRYABLE 8) (TRYABLE 7) (BOT)
- (TRYABLE 7) (TRYABLE 7) (TRYABLE 2) (TRYABLE 5) (TRYABLE 0) (TRYABLE 7)
- (TRYABLE 8) (TRYABLE 0) (ZERO) (TRYABLE 7) (TRYABLE 6) (TRYABLE 0) (TRYABLE 6)
- (TRYABLE 6) (TRYABLE 1) (ZERO) (TRYABLE 0) (TRYABLE 7) (TRYABLE 7) (TRYABLE 4)
- (TRYABLE 7) (BOT) (BOT) (TRYABLE 1) (BOT) (BOT) (TRYABLE 2) (TRYABLE 5)
- (TRYABLE 6) (BOT) (BOT) (NUM (+ (TRYABLE 7) (TRYABLE 5))) (TRYABLE 6) (BOT)
- (BOT) (TRYABLE 2) (BOT) (BOT) (TRYABLE 2) (TRYABLE 6) (TRYABLE 0) (BOT) (BOT)
- (TRYABLE 0) (TRYABLE 5) (TRYABLE 7) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7)
- (TRYABLE 7) (TRYABLE 4) (TRYABLE 5) (TRYABLE 3) (TRYABLE 7) (TRYABLE 7)
- (TRYABLE 2) (ZERO) (TRYABLE 6) (TRYABLE 6) (TRYABLE 2) (TRYABLE 6) (TRYABLE 6)
- (TRYABLE 0) (ZERO) (TRYABLE 0) (TRYABLE 6) (TRYABLE 6) (TRYABLE 1) (TRYABLE 5)
- (TRYABLE 6) (TRYABLE 6) (TRYABLE 4) (TRYABLE 6) (TRYABLE 6) (TRYABLE 0)
- (TRYABLE 5) (TRYABLE 0) (TRYABLE 6) (TRYABLE 6) (NUM (TRYABLE 5)) (ZERO)
- (TRYABLE 6) (TRYABLE 6) (TRYABLE 1) (TRYABLE 7) (TRYABLE 6) (TRYABLE 3)
- (+ (+ (+ (ZERO) (ZERO)) (+ (ZERO) (ZERO))) (+ (ZERO) (ZERO))) (TRYABLE 4)
- (TRYABLE 6) (TRYABLE 5) (TRYABLE 3) (ZERO) (TRYABLE 6) (TRYABLE 8) (TRYABLE 4)
- (TRYABLE 7) (TRYABLE 7) (TRYABLE 1) (ZERO) (TRYABLE 2) (TRYABLE 6) (TRYABLE 5)
- (TRYABLE 3) (+ (+ (ZERO) (ZERO)) (ZERO)) (TRYABLE 5) (TRYABLE 5) (TRYABLE 3)
- (TRYABLE 5) (TRYABLE 5) (TRYABLE 1) (+ (ZERO) (ZERO)) (NUM (ZERO)) (TRYABLE 5)
- (TRYABLE 5) (TRYABLE 0))
+((TRYABLE 2) (TRYABLE 3) (TRYABLE 0) (BOT) (BOT)
+ (NUM (+ (TRYABLE 3) (TRYABLE 5))) (BOT) (TRYABLE 4) (NUM (ZERO)) (BOT) (BOT)
+ (TRYABLE 3) (TRYABLE 2) (TRYABLE 3) (TRYABLE 4) (TRYABLE 5) (TRYABLE 5)
+ (TRYABLE 0) (TRYABLE 0) (ZERO) (TRYABLE 3) (TRYABLE 4) (TRYABLE 4) (TRYABLE 3)
+ (NUM (ZERO)) (TRYABLE 3) (TRYABLE 2) (BOT) (BOT) (TRYABLE 0) (TRYABLE 2)
+ (+ (ZERO) (ZERO)) (TRYABLE 2) (TRYABLE 4) (TRYABLE 3) (TRYABLE 1) (TRYABLE 0)
+ (ZERO) (BOT) (BOT) (BOT) (BOT) (+ (TRYABLE 3) (TRYABLE 3)) (TRYABLE 5)
+ (TRYABLE 5) (TRYABLE 0) (TRYABLE 5) (TRYABLE 5) (TRYABLE 4) (TRYABLE 0)
+ (+ (TRYABLE 3) (TRYABLE 3)) (TRYABLE 6) (TRYABLE 5) (TRYABLE 2) (TRYABLE 6)
+ (TRYABLE 5) (TRYABLE 5) (TRYABLE 0) (+ (TRYABLE 3) (TRYABLE 3)) (TRYABLE 6)
+ (TRYABLE 5) (TRYABLE 1) (TRYABLE 5) (TRYABLE 5) (TRYABLE 6) (TRYABLE 2) (ZERO)
+ (TRYABLE 4) (TRYABLE 5) (TRYABLE 3) (TRYABLE 5) (TRYABLE 4) (TRYABLE 4)
+ (TRYABLE 1) (ZERO) (TRYABLE 4) (TRYABLE 3) (TRYABLE 1) (TRYABLE 4) (TRYABLE 4)
+ (TRYABLE 3) (TRYABLE 2))
+#+end_src
+
+#+begin_src lisp :load no
+(let ((genrec::*initial-par* cond/arith-par)
+      (genrec::*frozen-holes*
+        (genrec::compute-live-holes cond-skeleton arith-examples cond/arith-par)))
+  (solve-skeleton 'cond-skeleton 'cond-examples arith-library))
+#+end_src
+
+#+RESULTS:
+#+begin_src lisp :load no
+((BOT) (TRYABLE 5) (TRYABLE 2) (BOT) (BOT) (NUM (+ (TRYABLE 3) (TRYABLE 5)))
+ (TRYABLE 3) (TRYABLE 4) (TRYABLE 3) (BOT) (BOT) (TRYABLE 3) (TRYABLE 2)
+ (TRYABLE 3) (TRYABLE 2) (TRYABLE 5) (TRYABLE 5) (TRYABLE 0) (TRYABLE 2) (ZERO)
+ (TRYABLE 3) (TRYABLE 4) (TRYABLE 4) (TRYABLE 3) (NUM (ZERO)) (TRYABLE 3)
+ (TRYABLE 0) (BOT) (BOT) (TRYABLE 0) (TRYABLE 0) (+ (ZERO) (ZERO)) (TRYABLE 2)
+ (TRYABLE 4) (TRYABLE 3) (TRYABLE 1) (TRYABLE 1) (+ (ZERO) (ZERO)) (TRYABLE 0)
+ (BOT) (BOT) (BOT) (TRYABLE 3) (TRYABLE 4) (TRYABLE 5) (TRYABLE 1) (TRYABLE 4)
+ (TRYABLE 5) (TRYABLE 4) (TRYABLE 2) (TRYABLE 4) (TRYABLE 5) (TRYABLE 6)
+ (NUM (ZERO)) (TRYABLE 5) (TRYABLE 6) (TRYABLE 6) (TRYABLE 1) (TRYABLE 3)
+ (TRYABLE 6) (TRYABLE 5) (BOT) (TRYABLE 5) (TRYABLE 5) (TRYABLE 5) (TRYABLE 0)
+ (ZERO) (TRYABLE 4) (TRYABLE 5) (TRYABLE 3) (TRYABLE 4) (TRYABLE 4) (TRYABLE 5)
+ (BOT) (ZERO) (TRYABLE 3) (TRYABLE 5) (TRYABLE 0) (TRYABLE 5) (TRYABLE 4)
+ (TRYABLE 4) (TRYABLE 1))
 #+end_src
 
 *** Lambda Calculus
@@ -484,52 +527,68 @@ Note that this only works after replacing the recursive references =term='s in =
   (mapcar (lambda (e) (list (append (car e) (list nil)) (cadr e)))
           cond-examples))
 (def lc-examples
-  (inputs-to-examples
-   #'lc-eval
-   (list (lam (var 0)) nil)
-   (list (lam (var 1)) nil)
-   (list (lam (var 0)) (list 'bot))
-   (list (lam (var 1)) (list 'bot))
-   (list (lam (var 1)) (list (clo nil (var 0))))
-   (list (var 0) (list (clo nil (var 0))))
-   (list (var 1) (list (clo nil (var 0))))
-   (list (lam (lam (var 0))) nil)
-   (list (app (lam (var 0)) (lam (var 0))) nil)
-   (list (app (var 0) (var 0)) nil)
-   (list (app (lam (var 0)) (var 0)) nil)
-   (list (app (var 0) (lam (var 0))) nil)
-   (list (app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 0))) nil)
-   (list (app (app (lam (lam (var 0))) (lam (var 1))) (lam (var 0))) nil)
-   (list (app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 1))) nil)
-   (list (app (lam (lam (var 0))) (lam (var 0))) nil)
-   (list (app (lam (lam (var 0))) (lam (var 1))) nil)
-   (list (app (lam (lam (var 1))) (lam (var 0))) nil)))
-#+nil (def lc-skeleton
-  (population-skeleton
-   (function (lc-value lc-value) lc-value)
-   (function (lc-value lc-term (list-of lc-value)) lc-value)
-   (function (nat lc-term lc-term) lc-value)
-   (function (lc-value lc-term lc-term) lc-value)
-   (function (lc-value nat) lc-value)
-   (function (lc-value lc-term (list-of lc-value)) lc-value)
-   (function (lc-term (list-of lc-value)) lc-value)))
-(def lc/arith-skeleton
+  (inputs-to-examples lc-eval
+   ((lam (var 0)) nil)
+   ((lam (var 1)) nil)
+   ((lam (var 0)) (list 'bot))
+   ((lam (var 1)) (list 'bot))
+   ((lam (var 1)) (list (clo nil (var 0))))
+   ((var 0) (list (clo nil (var 0))))
+   ((var 1) (list (clo nil (var 0))))
+   ((lam (lam (var 0))) nil)
+   ((app (lam (var 0)) (lam (var 0))) nil)
+   ((app (var 0) (var 0)) nil)
+   ((app (lam (var 0)) (var 0)) nil)
+   ((app (var 0) (lam (var 0))) nil)
+   ((app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 0))) nil)
+   ((app (app (lam (lam (var 0))) (lam (var 1))) (lam (var 0))) nil)
+   ((app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 1))) nil)
+   ((app (lam (lam (var 0))) (lam (var 0))) nil)
+   ((app (lam (lam (var 0))) (lam (var 1))) nil)
+   ((app (lam (lam (var 1))) (lam (var 0))) nil)))
+(def lc-skeleton
+  (call-graph-skeleton
+   (arith-1 (function (lc-value nat) lc-value)
+            arith-1 arith-2 eval-toplevel)
+   (arith-2 (function (lc-value term (list-of lc-value)) lc-value)
+            arith-1 arith-2 eval-toplevel)
+   (arith-eval (function (arith-term (list-of lc-value)) lc-value)
+               arith-1 arith-2 eval-toplevel)
+   (cond-1 (function (nat term term (list-of lc-value)) lc-value)
+           cond-1 cond-2 eval-toplevel)
+   (cond-2 (function (lc-value term term (list-of lc-value)) lc-value)
+           cond-1 cond-2 eval-toplevel)
+   (cond-eval (function (cond-term (list-of lc-value)) lc-value)
+               cond-1 cond-2 eval-toplevel)
+   (lc-1 (function (lc-value lc-value) lc-value)
+         lc-1 lc-2 eval-toplevel)
+   (lc-2 (function (lc-value term (list-of lc-value)) lc-value)
+         lc-1 lc-2 eval-toplevel)
+   (lc-eval (function (lc-term (list-of lc-value)) lc-value)
+            lc-1 lc-2 eval-toplevel)
+   (eval-toplevel (function (term (list-of lc-value)) lc-value)
+                  :code (term env)
+                  (etypecase term
+                    (arith-term (arith-eval term env))
+                    (cond-term (cond-eval term env))
+                    (lc-term (lc-eval term env))))))
+#+nil (def lc/arith-skeleton
   (interpreter-skeleton term
     (function (lc-value nat) lc-value)
     (function (lc-value term (list-of lc-value)) lc-value)
     (function (arith-term (list-of lc-value)) lc-value)))
-(def lc/cond-skeleton
+#+nil (def lc/cond-skeleton
   (interpreter-skeleton term
    (function (nat term term (list-of lc-value)) lc-value)
    (function (lc-value term term (list-of lc-value)) lc-value)
    (function (cond-term (list-of lc-value)) lc-value)))
-(def lc-skeleton
+#+nil (def lc-skeleton
   (interpreter-skeleton term
     (function (lc-value lc-value) lc-value)
     (function (lc-value term (list-of lc-value)) lc-value)
     (function (lc-term (list-of lc-value)) lc-value)))
-(def lc-skeleton-1
-  (population-skeleton
+#+nil (def lc-skeleton-1
+  (fully-connected-skeleton
    (function (lc-value lc-value) lc-value)
    (function (lc-value lc-term (list-of lc-value)) lc-value)
    (function (lc-value (list-of lc-value)) lc-value)))
@@ -538,243 +597,854 @@ Note that this only works after replacing the recursive references =term='s in =
                   (cons (list-of lc-value))))
 #+end_src
 
-#+begin_src lisp :load no
-(let ((genrec::*eval-toplevel*
-        '(lambda (term env)
-          (funcall (serapeum::lastcar (genrec::skeleton-functions lc/arith-skeleton))
-           term env))))
-  (solve-skeleton 'lc/arith-skeleton 'arith-examples-with-env
-                  '((+ nat) (num lc-value) (bot lc-value))))
-#+end_src
-
-#+RESULTS:
-#+begin_src lisp :load no
-<INFO> [12:02:16] genrec - Releasing the swarm with initial seed 0.
-<INFO> [12:02:17] genrec - search launched 256, search completed 0, search failed 0
-<INFO> [12:02:18] genrec - Voila!
-<INFO> [12:02:18] genrec - search launched 256, search completed 1, search failed 0
-<INFO> [12:02:25] genrec - search launched 256, search completed 2, search failed 0
-<INFO> [12:02:26] genrec - search launched 256, search completed 252, search failed 0
-<INFO> [12:02:27] genrec - search launched 256, search completed 255, search failed 0
-((TRYABLE 2) (+ (TRYABLE 6) (TRYABLE 6)) (TRYABLE 2) (BOT) (TRYABLE 3) (BOT)
- (TRYABLE 3) (TRYABLE 2) (TRYABLE 4) (+ (TRYABLE 3) (TRYABLE 3)) (BOT) (BOT)
- (NIL) (BOT) (NIL) (NUM (+ (TRYABLE 5) (TRYABLE 3))) (TRYABLE 3) (TRYABLE 4)
- (TRYABLE 1) (BOT) (NIL) (BOT) (NIL) (TRYABLE 2) (TRYABLE 2) (ZERO) (TRYABLE 1)
- (TRYABLE 6) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7) (TRYABLE 2) (TRYABLE 2)
- (TRYABLE 3) (TRYABLE 2) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6)
- (TRYABLE 0) (TRYABLE 0) (+ (+ (ZERO) (ZERO)) (ZERO)) (TRYABLE 2) (TRYABLE 4)
- (TRYABLE 5) (TRYABLE 4) (TRYABLE 5) (TRYABLE 3) (TRYABLE 1) (TRYABLE 3)
- (TRYABLE 2) (BOT) (TRYABLE 5) (BOT) (TRYABLE 5) (NUM (TRYABLE 3)) (TRYABLE 2)
- (ZERO) (TRYABLE 2) (TRYABLE 3) (TRYABLE 6) (TRYABLE 4) (TRYABLE 6) (TRYABLE 1)
- (TRYABLE 1) (+ (ZERO) (ZERO)) (TRYABLE 1) (BOT) (TRYABLE 4) (BOT) (TRYABLE 4)
- (BOT))
-#+end_src
+Pre-freezing is now necessary to solve the first strata (=arith= strata).
 
 #+begin_src lisp :load no
-(defvar *toplevel-par* nil)
-(let ((genrec::*eval-toplevel*
-        '(let ((arith-par
-                (genrec::compile-par
-                 '((TRYABLE 2) (+ (TRYABLE 6) (TRYABLE 6)) (TRYABLE 2) (BOT) (TRYABLE 3) (BOT)
-                   (TRYABLE 3) (TRYABLE 2) (TRYABLE 4) (+ (TRYABLE 3) (TRYABLE 3)) (BOT) (BOT)
-                   (NIL) (BOT) (NIL) (NUM (+ (TRYABLE 5) (TRYABLE 3))) (TRYABLE 3) (TRYABLE 4)
-                   (TRYABLE 1) (BOT) (NIL) (BOT) (NIL) (TRYABLE 2) (TRYABLE 2) (ZERO) (TRYABLE 1)
-                   (TRYABLE 6) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7) (TRYABLE 2) (TRYABLE 2)
-                   (TRYABLE 3) (TRYABLE 2) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6)
-                   (TRYABLE 0) (TRYABLE 0) (+ (+ (ZERO) (ZERO)) (ZERO)) (TRYABLE 2) (TRYABLE 4)
-                   (TRYABLE 5) (TRYABLE 4) (TRYABLE 5) (TRYABLE 3) (TRYABLE 1) (TRYABLE 3)
-                   (TRYABLE 2) (BOT) (TRYABLE 5) (BOT) (TRYABLE 5) (NUM (TRYABLE 3)) (TRYABLE 2)
-                   (ZERO) (TRYABLE 2) (TRYABLE 3) (TRYABLE 6) (TRYABLE 4) (TRYABLE 6) (TRYABLE 1)
-                   (TRYABLE 1) (+ (ZERO) (ZERO)) (TRYABLE 1) (BOT) (TRYABLE 4) (BOT) (TRYABLE 4)
-                   (BOT))
-                 t)))
-          (lambda (term env)
-            (let ((*toplevel-par* (or *toplevel-par* genrec::*par*)))
-              (etypecase term
-                (arith-term
-                 (let ((genrec::*par* arith-par))
-                   (funcall (serapeum::lastcar (genrec::skeleton-functions lc/arith-skeleton))
-                            term env)))
-                (cond-term
-                 (let ((genrec::*par* *toplevel-par*))
-                   (funcall (serapeum::lastcar (genrec::skeleton-functions lc/cond-skeleton))
-                            term env)))))))))
-  (solve-skeleton 'lc/cond-skeleton 'cond-examples-with-env
-                  '((bot lc-value))))
-#+end_src
-
-#+begin_src lisp :load no
-(def lc/arith-par (solve-skeleton 'lc/arith-skeleton 'arith-examples-with-env
-                                  '((+ nat) (num lc-value) (bot lc-value))))
+(def lc/arith-par
+  (let ((genrec::*frozen-holes* (genrec::holes-for-functions lc-skeleton '(3 4 5 6 7 8))))
+    (solve-skeleton 'lc-skeleton 'arith-examples-with-env
+                    '((+ nat) (num lc-value) (bot lc-value)))))
 lc/arith-par
 #+end_src
 
-#+RESULTS:
+#+RESULTS
 #+begin_src lisp :load no
-((TRYABLE 2) (+ (TRYABLE 6) (TRYABLE 6)) (TRYABLE 2) (TRYABLE 4) (TRYABLE 3)
- (TRYABLE 4) (TRYABLE 3) (TRYABLE 2) (TRYABLE 4) (+ (TRYABLE 3) (TRYABLE 3))
- (BOT) (BOT) (NIL) (BOT) (NIL) (NUM (+ (TRYABLE 5) (TRYABLE 3))) (TRYABLE 3)
- (TRYABLE 4) (TRYABLE 1) (BOT) (NIL) (BOT) (NIL) (TRYABLE 2) (TRYABLE 2) (ZERO)
- (TRYABLE 1) (TRYABLE 6) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7) (TRYABLE 2)
- (TRYABLE 2) (TRYABLE 3) (TRYABLE 2) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5)
- (TRYABLE 6) (TRYABLE 0) (TRYABLE 0) (+ (+ (ZERO) (ZERO)) (ZERO)) (TRYABLE 2)
- (TRYABLE 4) (TRYABLE 5) (TRYABLE 4) (TRYABLE 5) (TRYABLE 3) (TRYABLE 1)
- (TRYABLE 3) (TRYABLE 2) (BOT) (TRYABLE 5) (BOT) (TRYABLE 5) (NUM (TRYABLE 3))
- (TRYABLE 2) (ZERO) (TRYABLE 2) (TRYABLE 3) (TRYABLE 6) (TRYABLE 4) (TRYABLE 6)
- (TRYABLE 1) (TRYABLE 1) (+ (ZERO) (ZERO)) (TRYABLE 1) (BOT) (TRYABLE 4) (BOT)
- (TRYABLE 4) (BOT))
+((TRYABLE 2) (TRYABLE 6) (TRYABLE 0) (TRYABLE 4) (TRYABLE 3) (TRYABLE 4)
+ (TRYABLE 3) (TRYABLE 5) (TRYABLE 4) (TRYABLE 5) (TRYABLE 0) (BOT) (NIL) (BOT)
+ (NIL) (NUM (+ (TRYABLE 5) (TRYABLE 3))) (TRYABLE 0) (TRYABLE 4) (TRYABLE 2)
+ (BOT) (NIL) (BOT) (NIL) (BOT) (BOT) (ZERO) (NUM (ZERO)) (TRYABLE 4)
+ (TRYABLE 7) (TRYABLE 6) (TRYABLE 3) (TRYABLE 5) (TRYABLE 2) (TRYABLE 3)
+ (TRYABLE 2) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6) (TRYABLE 0)
+ (TRYABLE 3) (ZERO) (TRYABLE 3) (TRYABLE 4) (TRYABLE 5) (TRYABLE 4) (TRYABLE 5)
+ (TRYABLE 3) (TRYABLE 2) (TRYABLE 3) (TRYABLE 1) (BOT) (TRYABLE 5) (BOT)
+ (TRYABLE 5) (NUM (TRYABLE 3)) (BOT) (ZERO) (TRYABLE 2) (TRYABLE 3) (TRYABLE 6)
+ (TRYABLE 4) (TRYABLE 6) (TRYABLE 1) (BOT) (+ (ZERO) (ZERO)) (TRYABLE 2) (BOT)
+ (TRYABLE 4) (BOT) (TRYABLE 4) (TRYABLE 0) (ZERO) (BOT) (BOT) (NIL) (BOT) (BOT)
+ (BOT) (NIL) (BOT) (NIL) (BOT) (ZERO) (BOT) (BOT) (NIL) (BOT) (BOT) (BOT) (NIL)
+ (BOT) (NIL) (BOT) (ZERO) (BOT) (BOT) (NIL) (BOT) (BOT) (BOT) (NIL) (BOT) (NIL)
+ (BOT) (ZERO) (BOT) (BOT) (NIL) (BOT) (BOT) (BOT) (NIL) (BOT) (NIL) (BOT)
+ (ZERO) (BOT) (BOT) (NIL) (BOT) (BOT) (BOT) (NIL) (BOT) (NIL) (BOT) (ZERO)
+ (BOT) (BOT) (NIL) (BOT) (BOT) (BOT) (NIL) (BOT) (NIL) (BOT) (BOT) (BOT) (BOT)
+ (BOT) (NIL) (BOT) (NIL) (BOT) (BOT) (BOT) (BOT) (BOT) (NIL) (BOT) (NIL) (BOT)
+ (BOT) (BOT) (BOT) (BOT) (NIL) (BOT) (NIL) (BOT) (BOT) (BOT) (BOT) (BOT) (NIL)
+ (BOT) (NIL) (BOT) (BOT) (BOT) (BOT) (BOT) (NIL) (BOT) (NIL) (BOT) (BOT) (BOT)
+ (BOT) (BOT) (NIL) (BOT) (NIL) (BOT) (BOT) (BOT) (BOT) (BOT) (NIL) (BOT) (NIL)
+ (BOT) (BOT) (BOT) (BOT) (BOT) (NIL) (BOT) (NIL) (BOT) (BOT) (BOT) (BOT) (BOT)
+ (NIL) (BOT) (NIL) (BOT))
 #+end_src
 
 #+begin_src lisp :load no
 (def lc/cond-par
-  (let ((*eval-toplevel*
-          (make-instance 'genrec::dispatch-eval
-                         :arg-list '(term env)
-                         :dispatch-list
-                         `((ARITH-TERM LC/ARITH-SKELETON ,lc/arith-par)))))
-    (solve-skeleton 'lc/cond-skeleton 'cond-examples-with-env '((bot lc-value)))))
+  (let ((genrec::*frozen-holes*
+          (union (genrec::compute-live-holes lc-skeleton arith-examples-with-env lc/arith-par)
+                 (genrec::holes-for-functions lc-skeleton '(6 7 8))))
+        (genrec::*initial-par* lc/arith-par))
+    (solve-skeleton 'lc-skeleton cond-examples-with-env '((bot lc-value)))))
 lc/cond-par
 #+end_src
 
 #+RESULTS:
 #+begin_src lisp :load no
-((TRYABLE 3) (TRYABLE 5) (TRYABLE 5) (TRYABLE 6) (BOT) (TRYABLE 5) (TRYABLE 5)
- (TRYABLE 6) (TRYABLE 4) (TRYABLE 6) (TRYABLE 2) (TRYABLE 4) (TRYABLE 5)
- (TRYABLE 6) (TRYABLE 7) (BOT) (TRYABLE 6) (TRYABLE 5) (TRYABLE 7) (TRYABLE 5)
- (TRYABLE 7) (TRYABLE 1) (ZERO) (TRYABLE 6) (TRYABLE 6) (TRYABLE 3) (BOT)
- (TRYABLE 6) (TRYABLE 6) (TRYABLE 3) (TRYABLE 4) (TRYABLE 8) (TRYABLE 1)
- (TRYABLE 3) (TRYABLE 5) (TRYABLE 6) (TRYABLE 7) (TRYABLE 2) (TRYABLE 6)
- (TRYABLE 5) (TRYABLE 7) (TRYABLE 5) (TRYABLE 7) (TRYABLE 0) (ZERO) (TRYABLE 4)
- (TRYABLE 5) (TRYABLE 6) (TRYABLE 1) (TRYABLE 5) (TRYABLE 5) (TRYABLE 6)
- (TRYABLE 4) (TRYABLE 6) (TRYABLE 0) (ZERO) (TRYABLE 3) (TRYABLE 4) (TRYABLE 7)
- (TRYABLE 0) (TRYABLE 4) (TRYABLE 5) (TRYABLE 7) (TRYABLE 3) (TRYABLE 7)
- (TRYABLE 1))
+((TRYABLE 2) (TRYABLE 6) (TRYABLE 0) (TRYABLE 4) (TRYABLE 3) (TRYABLE 4)
+ (TRYABLE 3) (BOT) (TRYABLE 1) (TRYABLE 5) (TRYABLE 4) (BOT) (NIL) (BOT) (NIL)
+ (NUM (+ (TRYABLE 5) (TRYABLE 3))) (TRYABLE 1) (TRYABLE 4) (TRYABLE 0) (BOT)
+ (NIL) (BOT) (NIL) (BOT) (TRYABLE 1) (ZERO) (TRYABLE 5) (TRYABLE 4) (TRYABLE 3)
+ (TRYABLE 4) (TRYABLE 7) (TRYABLE 1) (TRYABLE 2) (TRYABLE 3) (TRYABLE 4)
+ (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6) (TRYABLE 0) (TRYABLE 0) (ZERO)
+ (TRYABLE 3) (TRYABLE 4) (TRYABLE 5) (TRYABLE 4) (TRYABLE 5) (TRYABLE 3)
+ (TRYABLE 1) (TRYABLE 3) (TRYABLE 1) (BOT) (TRYABLE 5) (BOT) (TRYABLE 5)
+ (NUM (TRYABLE 3)) (BOT) (ZERO) (TRYABLE 2) (TRYABLE 3) (TRYABLE 6) (TRYABLE 4)
+ (TRYABLE 6) (TRYABLE 1) (BOT) (+ (ZERO) (ZERO)) (TRYABLE 1) (BOT) (TRYABLE 4)
+ (BOT) (TRYABLE 4) (TRYABLE 0) (TRYABLE 3) (TRYABLE 5) (TRYABLE 4) (TRYABLE 6)
+ (TRYABLE 2) (TRYABLE 5) (TRYABLE 4) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6)
+ (TRYABLE 1) (TRYABLE 3) (TRYABLE 6) (TRYABLE 5) (TRYABLE 7) (BOT) (TRYABLE 5)
+ (TRYABLE 5) (TRYABLE 7) (TRYABLE 5) (TRYABLE 7) (BOT) (ZERO) (TRYABLE 7)
+ (TRYABLE 4) (TRYABLE 3) (TRYABLE 2) (TRYABLE 7) (TRYABLE 7) (TRYABLE 8)
+ (TRYABLE 7) (TRYABLE 8) (TRYABLE 2) (TRYABLE 3) (TRYABLE 5) (TRYABLE 6)
+ (TRYABLE 7) (TRYABLE 0) (TRYABLE 6) (TRYABLE 5) (TRYABLE 7) (TRYABLE 5)
+ (TRYABLE 7) (TRYABLE 1) (ZERO) (TRYABLE 5) (TRYABLE 5) (TRYABLE 6) (BOT)
+ (TRYABLE 4) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6) (TRYABLE 2) (ZERO)
+ (TRYABLE 3) (TRYABLE 4) (TRYABLE 7) (TRYABLE 2) (TRYABLE 5) (TRYABLE 4)
+ (TRYABLE 7) (TRYABLE 3) (TRYABLE 7) (TRYABLE 1) (BOT) (BOT) (BOT) (BOT) (NIL)
+ (BOT) (NIL) (BOT) (BOT) (BOT) (BOT) (BOT) (NIL) (BOT) (NIL) (BOT) (BOT) (BOT)
+ (BOT) (BOT) (NIL) (BOT) (NIL) (BOT) (BOT) (BOT) (BOT) (BOT) (NIL) (BOT) (NIL)
+ (BOT) (BOT) (BOT) (BOT) (BOT) (NIL) (BOT) (NIL) (BOT) (BOT) (BOT) (BOT) (BOT)
+ (NIL) (BOT) (NIL) (BOT) (BOT) (BOT) (BOT) (BOT) (NIL) (BOT) (NIL) (BOT) (BOT)
+ (BOT) (BOT) (BOT) (NIL) (BOT) (NIL) (BOT) (BOT) (BOT) (BOT) (BOT) (NIL) (BOT)
+ (NIL) (BOT))
 #+end_src
 
 #+begin_src lisp :load no
 (def lc-par
-  (let ((*eval-toplevel*
-          (make-instance 'genrec::dispatch-eval
-                         :arg-list '(term env)
-                         :dispatch-list
-                         `((ARITH-TERM LC/ARITH-SKELETON ,lc/arith-par)))))
-    (solve-skeleton 'lc-skeleton 'lc-examples '((bot lc-value) (clo lc-value) (safe-nth lc-value)
-                                                (cons (list-of lc-value))))))
+  (let ((genrec::*frozen-holes*
+          (union (genrec::compute-live-holes lc-skeleton arith-examples-with-env lc/cond-par)
+                 (genrec::compute-live-holes lc-skeleton cond-examples-with-env lc/cond-par)))
+        (genrec::*initial-par* lc/cond-par))
+    (solve-skeleton 'lc-skeleton lc-examples '((bot lc-value)
+                                               (clo lc-value) (safe-nth lc-value)
+                                              (cons (list-of lc-value))))))
 lc-par
 #+end_src
 
 #+RESULTS:
 #+begin_src lisp :load no
-((TRYABLE 5) (TRYABLE 6) (TRYABLE 2) (TRYABLE 4) (TRYABLE 3) (TRYABLE 4)
- (TRYABLE 3) (TRYABLE 5) (TRYABLE 1) (TRYABLE 1) (TRYABLE 1) (BOT)
- (CONS (TRYABLE 2) (NIL)) (BOT) (NIL) (TRYABLE 1) (TRYABLE 3) (TRYABLE 1)
- (TRYABLE 4) (BOT) (NIL) (BOT) (CONS (BOT) (NIL)) (TRYABLE 4) (TRYABLE 2)
- (TRYABLE 0) (SAFE-NTH (ZERO) (NIL)) (TRYABLE 4) (CONS (TRYABLE 2) (TRYABLE 3))
- (TRYABLE 6) (TRYABLE 7) (TRYABLE 1) (TRYABLE 2) (TRYABLE 1) (TRYABLE 0)
- (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6) (TRYABLE 0) (TRYABLE 1)
- (TRYABLE 0) (TRYABLE 3) (TRYABLE 4) (TRYABLE 5) (TRYABLE 4) (TRYABLE 5)
- (TRYABLE 2) (SAFE-NTH (TRYABLE 3) (TRYABLE 5)) (BOT) (TRYABLE 1) (BOT)
- (TRYABLE 5) (BOT) (CONS (TRYABLE 0) (CONS (BOT) (TRYABLE 5))) (TRYABLE 0)
- (SAFE-NTH (ZERO) (NIL)) (CLO (TRYABLE 5) (TRYABLE 3)) (TRYABLE 2) (TRYABLE 3)
- (CONS (BOT) (TRYABLE 5)) (TRYABLE 3) (TRYABLE 5) (TRYABLE 0) (TRYABLE 2)
- (CLO (NIL) (BOT)) (TRYABLE 0) (TRYABLE 4) (TRYABLE 6) (TRYABLE 3) (TRYABLE 6)
- (TRYABLE 1))
+((BOT) (TRYABLE 6) (TRYABLE 0) (TRYABLE 4) (TRYABLE 3) (TRYABLE 4) (TRYABLE 3)
+ (TRYABLE 1) (TRYABLE 2) (TRYABLE 5) (TRYABLE 2) (BOT) (NIL) (BOT) (NIL)
+ (NUM (+ (TRYABLE 5) (TRYABLE 3))) (SAFE-NTH (ZERO) (NIL)) (TRYABLE 4)
+ (CLO (NIL) (BOT)) (BOT) (CONS (TRYABLE 1) (NIL)) (BOT)
+ (CONS (TRYABLE 3) (CONS (TRYABLE 1) (NIL))) (BOT) (TRYABLE 5) (ZERO)
+ (TRYABLE 5) (TRYABLE 6) (TRYABLE 3) (TRYABLE 4) (TRYABLE 7) (TRYABLE 1)
+ (TRYABLE 2) (TRYABLE 3) (TRYABLE 0) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5)
+ (TRYABLE 6) (TRYABLE 0) (TRYABLE 0) (ZERO) (TRYABLE 0) (TRYABLE 4) (TRYABLE 5)
+ (TRYABLE 4) (TRYABLE 5) (TRYABLE 3) (TRYABLE 0) (TRYABLE 3) (TRYABLE 2) (BOT)
+ (TRYABLE 5) (BOT) (CONS (BOT) (CONS (BOT) (CONS (BOT) (TRYABLE 5))))
+ (NUM (TRYABLE 3)) (CLO (NIL) (TRYABLE 3)) (ZERO) (TRYABLE 2) (TRYABLE 3)
+ (TRYABLE 6) (TRYABLE 4) (TRYABLE 6) (TRYABLE 1) (BOT) (+ (ZERO) (ZERO))
+ (TRYABLE 0) (BOT) (TRYABLE 4) (BOT) (TRYABLE 4) (TRYABLE 0) (TRYABLE 3)
+ (TRYABLE 5) (TRYABLE 4) (TRYABLE 6) (TRYABLE 2) (TRYABLE 5) (TRYABLE 4)
+ (TRYABLE 6) (TRYABLE 5) (TRYABLE 6) (TRYABLE 1) (TRYABLE 3) (TRYABLE 5)
+ (TRYABLE 6) (CONS (BOT) (TRYABLE 7)) (TRYABLE 2) (TRYABLE 5) (TRYABLE 6)
+ (TRYABLE 7) (TRYABLE 6) (TRYABLE 7) (BOT) (ZERO) (TRYABLE 7) (TRYABLE 7)
+ (TRYABLE 3) (TRYABLE 5) (TRYABLE 7) (TRYABLE 7) (CONS (BOT) (TRYABLE 8))
+ (TRYABLE 6) (CONS (BOT) (TRYABLE 8)) (TRYABLE 2) (TRYABLE 3) (TRYABLE 5)
+ (TRYABLE 6) (TRYABLE 7) (TRYABLE 0) (TRYABLE 6) (TRYABLE 5) (TRYABLE 7)
+ (TRYABLE 6) (TRYABLE 7) (TRYABLE 1) (ZERO) (TRYABLE 5) (TRYABLE 4) (TRYABLE 6)
+ (TRYABLE 1) (TRYABLE 5) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6)
+ (TRYABLE 2) (ZERO) (TRYABLE 5) (TRYABLE 5)
+ (CONS (TRYABLE 0) (CONS (TRYABLE 1) (TRYABLE 7))) (TRYABLE 2) (TRYABLE 5)
+ (TRYABLE 4) (TRYABLE 7) (TRYABLE 3) (TRYABLE 7) (TRYABLE 1) (TRYABLE 1) (BOT)
+ (TRYABLE 6) (TRYABLE 4) (CONS (BOT) (CONS (BOT) (TRYABLE 3))) (TRYABLE 4)
+ (CONS (TRYABLE 1) (TRYABLE 3)) (TRYABLE 2) (TRYABLE 4) (TRYABLE 0) (TRYABLE 0)
+ (BOT)
+ (CONS (TRYABLE 2)
+       (CONS (TRYABLE 0)
+             (CONS (TRYABLE 1)
+                   (CONS (BOT)
+                         (CONS (BOT)
+                               (CONS (TRYABLE 2)
+                                     (CONS (SAFE-NTH (ZERO) (NIL))
+                                           (CONS (BOT)
+                                                 (CONS (TRYABLE 0)
+                                                       (NIL))))))))))
+ (BOT) (CONS (TRYABLE 5) (CONS (BOT) (CONS (BOT) (NIL)))) (TRYABLE 2)
+ (TRYABLE 0) (BOT) (TRYABLE 3) (BOT) (CONS (TRYABLE 3) (NIL)) (BOT)
+ (CONS (TRYABLE 1)
+       (CONS (TRYABLE 1)
+             (CONS (BOT)
+                   (CONS (SAFE-NTH (ZERO) (NIL))
+                         (CONS (SAFE-NTH (ZERO) (NIL)) (NIL))))))
+ (SAFE-NTH (ZERO) (NIL)) (TRYABLE 2) (TRYABLE 5) (TRYABLE 2) (TRYABLE 4)
+ (CONS (TRYABLE 2) (TRYABLE 3)) (TRYABLE 4) (TRYABLE 7) (TRYABLE 5) (TRYABLE 0)
+ (TRYABLE 4) (TRYABLE 0) (TRYABLE 5) (CONS (BOT) (TRYABLE 6)) (TRYABLE 5)
+ (TRYABLE 6) (CLO (TRYABLE 6) (BOT)) (TRYABLE 1) (TRYABLE 3) (TRYABLE 2)
+ (TRYABLE 4) (TRYABLE 5) (TRYABLE 4) (TRYABLE 5) (TRYABLE 2) (TRYABLE 0)
+ (TRYABLE 2) (TRYABLE 1) (BOT) (TRYABLE 5) (BOT)
+ (CONS (BOT) (CONS (SAFE-NTH (ZERO) (NIL)) (CONS (BOT) (TRYABLE 5))))
+ (SAFE-NTH (TRYABLE 3) (TRYABLE 5)) (TRYABLE 1) (BOT)
+ (CLO (TRYABLE 5) (TRYABLE 3)) (TRYABLE 3) (TRYABLE 5) (TRYABLE 3)
+ (CONS (BOT) (CONS (BOT) (TRYABLE 5))) (TRYABLE 1) (TRYABLE 1) (TRYABLE 2)
+ (SAFE-NTH (ZERO) (NIL)) (TRYABLE 3) (TRYABLE 6) (TRYABLE 4) (TRYABLE 6)
+ (TRYABLE 0))
 #+end_src
 
-** Monadic Definitional Interpreter
+It turns out that the above examples don't constrain the solution enough -- they doesn't specify how =arith-term= or =cond-term= inside =lc-term= shall be evaluated.
+
+#+begin_src lisp
+(def lc-examples-more
+  (inputs-to-examples lc-eval
+   ((app (lam (var 0)) (lit 0)) nil)
+   ((app (lam (add (lit 1) (var 0))) (lit 0)) nil)
+   ((app (lam (add (lit 0) (var 0))) (lit 1)) nil)
+   ((app (lit 0) (lit 0)) nil)))
+#+end_src
+
 #+begin_src lisp :load no
-(uiop:define-package #:genrec/experiments/monadic
-    (:mix #:cl #:genrec #:serapeum)
-  (:shadow #:mapply))
-(in-package #:genrec/experiments/monadic)
-(define-adt term
+(def lc-par-revised
+  (let ((genrec::*frozen-holes*
+          (genrec::compute-live-holes
+           lc-skeleton
+           (append arith-examples-with-env cond-examples-with-env lc-examples)
+           lc-par))
+        (genrec::*initial-par* lc-par))
+    (solve-skeleton 'lc-skeleton lc-examples-more '((bot lc-value)
+                                              (clo lc-value) (safe-nth lc-value)
+                                                   (cons (list-of lc-value))))))
+lc-par-revised
+#+end_src
+
+#+RESULTS:
+#+begin_src lisp :load no
+((TRYABLE 5) (TRYABLE 6) (TRYABLE 1) (TRYABLE 4)
+ (CONS (CLO (NIL) (BOT)) (TRYABLE 3)) (TRYABLE 4)
+ (CONS (TRYABLE 0) (CONS (TRYABLE 5) (TRYABLE 3))) (TRYABLE 1) (TRYABLE 0)
+ (TRYABLE 5) (TRYABLE 2) (BOT) (NIL) (BOT) (NIL)
+ (NUM (+ (TRYABLE 5) (TRYABLE 3))) (CLO (NIL) (BOT)) (TRYABLE 4) (TRYABLE 3)
+ (BOT) (CONS (BOT) (NIL)) (BOT) (CONS (BOT) (NIL)) (BOT) (TRYABLE 1) (ZERO)
+ (TRYABLE 1) (TRYABLE 6) (TRYABLE 3) (TRYABLE 6) (TRYABLE 7) (TRYABLE 5)
+ (TRYABLE 2) (TRYABLE 3) (TRYABLE 4) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5)
+ (TRYABLE 6) (TRYABLE 0) (TRYABLE 1) (ZERO) (SAFE-NTH (ZERO) (NIL)) (TRYABLE 4)
+ (CONS (SAFE-NTH (ZERO) (NIL)) (TRYABLE 5)) (TRYABLE 4) (TRYABLE 5) (TRYABLE 3)
+ (TRYABLE 1) (TRYABLE 3) (TRYABLE 2) (BOT) (TRYABLE 5) (BOT) (TRYABLE 5)
+ (NUM (TRYABLE 3)) (TRYABLE 2) (ZERO) (TRYABLE 2) (TRYABLE 3) (TRYABLE 6)
+ (TRYABLE 4) (TRYABLE 6) (TRYABLE 1) (BOT) (+ (ZERO) (ZERO)) (TRYABLE 1) (BOT)
+ (TRYABLE 4) (BOT) (TRYABLE 4) (TRYABLE 0) (TRYABLE 3) (TRYABLE 4) (TRYABLE 5)
+ (TRYABLE 6) (TRYABLE 2) (TRYABLE 5) (TRYABLE 4) (TRYABLE 6) (TRYABLE 5)
+ (TRYABLE 6) (TRYABLE 1) (TRYABLE 4) (TRYABLE 6) (TRYABLE 6) (TRYABLE 7)
+ (TRYABLE 2) (TRYABLE 6) (TRYABLE 6) (CONS (BOT) (TRYABLE 7)) (TRYABLE 5)
+ (TRYABLE 7) (BOT) (ZERO) (TRYABLE 6) (TRYABLE 4) (CONS (BOT) (TRYABLE 8))
+ (TRYABLE 1) (TRYABLE 7) (TRYABLE 4) (TRYABLE 8) (TRYABLE 6) (TRYABLE 8)
+ (TRYABLE 1) (TRYABLE 3) (TRYABLE 5) (TRYABLE 6) (TRYABLE 7) (TRYABLE 0)
+ (TRYABLE 6) (TRYABLE 5) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7) (TRYABLE 1) (ZERO)
+ (TRYABLE 5) (TRYABLE 5) (TRYABLE 6) (CLO (NIL) (BOT)) (TRYABLE 4) (TRYABLE 4)
+ (TRYABLE 6) (TRYABLE 5) (TRYABLE 6) (TRYABLE 2) (ZERO) (TRYABLE 5) (TRYABLE 5)
+ (CONS (TRYABLE 0) (CONS (BOT) (CONS (BOT) (CONS (TRYABLE 0) (TRYABLE 7)))))
+ (TRYABLE 2) (TRYABLE 5) (TRYABLE 4) (TRYABLE 7) (TRYABLE 3) (TRYABLE 7)
+ (TRYABLE 1) (TRYABLE 6) (TRYABLE 6) (TRYABLE 6) (TRYABLE 4)
+ (CONS (BOT) (CONS (BOT) (TRYABLE 3))) (TRYABLE 4)
+ (CONS (TRYABLE 1) (TRYABLE 3)) (TRYABLE 2) (BOT) (TRYABLE 2) (TRYABLE 5) (BOT)
+ (CONS (BOT)
+       (CONS (TRYABLE 4)
+             (CONS (TRYABLE 4)
+                   (CONS (TRYABLE 5)
+                         (CONS (BOT)
+                               (CONS (TRYABLE 1)
+                                     (CONS (TRYABLE 4)
+                                           (CONS (TRYABLE 1)
+                                                 (CONS (BOT)
+                                                       (CONS (BOT)
+                                                             (CONS (TRYABLE 2)
+                                                                   (CONS
+                                                                    (SAFE-NTH
+                                                                     (ZERO)
+                                                                     (NIL))
+                                                                    (CONS (BOT)
+                                                                          (CONS
+                                                                           (TRYABLE
+                                                                            0)
+                                                                           (NIL)))))))))))))))
+ (BOT)
+ (CONS (TRYABLE 2)
+       (CONS (TRYABLE 2)
+             (CONS (BOT) (CONS (TRYABLE 1) (CONS (TRYABLE 0) (NIL))))))
+ (BOT) (TRYABLE 0) (TRYABLE 2) (TRYABLE 2) (BOT) (NIL) (BOT)
+ (CONS (TRYABLE 3)
+       (CONS (TRYABLE 1)
+             (CONS (TRYABLE 0)
+                   (CONS (BOT)
+                         (CONS (SAFE-NTH (ZERO) (NIL))
+                               (CONS (SAFE-NTH (ZERO) (NIL)) (NIL)))))))
+ (SAFE-NTH (ZERO) (NIL)) (TRYABLE 2) (TRYABLE 1) (TRYABLE 1) (TRYABLE 6)
+ (TRYABLE 3) (TRYABLE 4) (TRYABLE 7) (TRYABLE 5) (TRYABLE 0) (TRYABLE 0)
+ (TRYABLE 1) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6) (TRYABLE 4)
+ (TRYABLE 1) (TRYABLE 2) (CLO (NIL) (BOT)) (TRYABLE 4) (TRYABLE 5) (TRYABLE 4)
+ (TRYABLE 5) (TRYABLE 2) (TRYABLE 2) (SAFE-NTH (ZERO) (NIL)) (TRYABLE 2) (BOT)
+ (CONS (TRYABLE 0) (CONS (BOT) (TRYABLE 5))) (BOT)
+ (CONS (BOT) (CONS (BOT) (TRYABLE 5))) (SAFE-NTH (TRYABLE 3) (TRYABLE 5))
+ (TRYABLE 2) (TRYABLE 2) (CLO (TRYABLE 5) (TRYABLE 3)) (TRYABLE 3) (TRYABLE 5)
+ (TRYABLE 3) (TRYABLE 5) (TRYABLE 1) (TRYABLE 1) (TRYABLE 2)
+ (SAFE-NTH (ZERO) (NIL)) (TRYABLE 3) (TRYABLE 6) (TRYABLE 4) (TRYABLE 6)
+ (TRYABLE 0))
+#+end_src
+
+Can we do it in one go with =(append lc-examples lc-examples-more)=? Yes!
+
+#+begin_src lisp :load no
+(def lc-par-1
+  (let ((genrec::*frozen-holes*
+          (union (genrec::compute-live-holes lc-skeleton arith-examples-with-env lc/cond-par)
+                 (genrec::compute-live-holes lc-skeleton cond-examples-with-env lc/cond-par)))
+        (genrec::*initial-par* lc/cond-par))
+    (solve-skeleton 'lc-skeleton (append lc-examples lc-examples-more)
+                    '((bot lc-value)
+                      (clo lc-value) (safe-nth lc-value)
+                      (cons (list-of lc-value))))))
+lc-par-1
+#+end_src
+
+#+RESULTS:
+#+begin_src lisp :load no
+((TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 4) (TRYABLE 3) (TRYABLE 4)
+ (TRYABLE 3) (TRYABLE 2) (TRYABLE 1) (TRYABLE 3) (TRYABLE 0) (BOT)
+ (CONS (BOT) (CONS (TRYABLE 1) (NIL))) (BOT) (NIL)
+ (NUM (+ (TRYABLE 5) (TRYABLE 3))) (SAFE-NTH (ZERO) (NIL)) (TRYABLE 4)
+ (TRYABLE 2) (BOT) (NIL) (BOT) (CONS (SAFE-NTH (ZERO) (NIL)) (NIL)) (BOT)
+ (TRYABLE 1) (ZERO) (TRYABLE 2) (TRYABLE 6) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7)
+ (TRYABLE 2) (TRYABLE 2) (TRYABLE 3) (SAFE-NTH (ZERO) (NIL)) (TRYABLE 5)
+ (TRYABLE 6) (TRYABLE 5) (TRYABLE 6) (TRYABLE 0) (TRYABLE 3) (ZERO) (TRYABLE 1)
+ (TRYABLE 4) (TRYABLE 5) (TRYABLE 4) (TRYABLE 5) (TRYABLE 3) (TRYABLE 1)
+ (TRYABLE 3) (TRYABLE 1) (BOT) (CONS (BOT) (TRYABLE 5)) (BOT) (TRYABLE 5)
+ (NUM (TRYABLE 3)) (TRYABLE 0) (ZERO) (TRYABLE 2) (TRYABLE 3) (TRYABLE 6)
+ (TRYABLE 4) (TRYABLE 6) (TRYABLE 1) (BOT) (+ (ZERO) (ZERO)) (TRYABLE 2) (BOT)
+ (CONS (TRYABLE 1) (TRYABLE 4)) (BOT) (TRYABLE 4) (TRYABLE 0) (TRYABLE 3)
+ (TRYABLE 5) (TRYABLE 4) (TRYABLE 6) (TRYABLE 2) (TRYABLE 5) (TRYABLE 4)
+ (TRYABLE 6) (TRYABLE 5) (TRYABLE 6) (TRYABLE 1) (TRYABLE 3) (TRYABLE 6)
+ (TRYABLE 6) (TRYABLE 7) (TRYABLE 0) (TRYABLE 5) (TRYABLE 5)
+ (CONS (BOT) (CONS (BOT) (CONS (BOT) (CONS (TRYABLE 2) (TRYABLE 7)))))
+ (TRYABLE 6) (TRYABLE 7) (BOT) (ZERO) (TRYABLE 7) (TRYABLE 6) (TRYABLE 8)
+ (TRYABLE 2) (TRYABLE 7) (TRYABLE 6) (TRYABLE 8) (TRYABLE 4) (TRYABLE 8)
+ (TRYABLE 1) (TRYABLE 3) (TRYABLE 5) (TRYABLE 6) (TRYABLE 7) (TRYABLE 0)
+ (TRYABLE 6) (TRYABLE 5) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7) (TRYABLE 1) (ZERO)
+ (TRYABLE 4) (TRYABLE 5) (TRYABLE 6) (BOT) (TRYABLE 5) (TRYABLE 4)
+ (CONS (BOT) (CONS (TRYABLE 3) (TRYABLE 6))) (TRYABLE 5) (TRYABLE 6)
+ (TRYABLE 2) (ZERO) (TRYABLE 5) (TRYABLE 5) (TRYABLE 7) (TRYABLE 2) (TRYABLE 5)
+ (TRYABLE 4) (TRYABLE 7) (TRYABLE 3) (TRYABLE 7) (TRYABLE 1) (TRYABLE 2)
+ (TRYABLE 5) (CLO (NIL) (BOT)) (TRYABLE 4) (CONS (BOT) (TRYABLE 3)) (TRYABLE 4)
+ (CONS (TRYABLE 5) (TRYABLE 3)) (TRYABLE 5) (TRYABLE 1) (TRYABLE 4) (TRYABLE 1)
+ (BOT) (NIL) (BOT) (CONS (TRYABLE 2) (NIL)) (CLO (NIL) (BOT)) (TRYABLE 1) (BOT)
+ (BOT) (BOT) (NIL) (BOT) (CONS (TRYABLE 1) (NIL)) (TRYABLE 3) (BOT) (TRYABLE 2)
+ (SAFE-NTH (ZERO) (NIL)) (TRYABLE 4) (CONS (TRYABLE 2) (TRYABLE 7)) (TRYABLE 6)
+ (TRYABLE 7) (TRYABLE 1) (TRYABLE 1) (TRYABLE 2) (BOT) (TRYABLE 5) (TRYABLE 6)
+ (TRYABLE 5) (TRYABLE 6) (BOT) (TRYABLE 2) (TRYABLE 3) (TRYABLE 3) (TRYABLE 4)
+ (TRYABLE 5) (TRYABLE 4) (TRYABLE 5) (TRYABLE 2) (TRYABLE 1)
+ (SAFE-NTH (ZERO) (TRYABLE 5)) (TRYABLE 2) (BOT) (TRYABLE 5) (BOT) (TRYABLE 5)
+ (SAFE-NTH (TRYABLE 3) (TRYABLE 5)) (CLO (TRYABLE 5) (TRYABLE 3)) (TRYABLE 2)
+ (TRYABLE 0) (TRYABLE 3) (TRYABLE 5) (TRYABLE 3) (TRYABLE 5) (TRYABLE 0)
+ (TRYABLE 0) (TRYABLE 0) (TRYABLE 2) (TRYABLE 4) (TRYABLE 6) (TRYABLE 3)
+ (CONS (CLO (NIL) (BOT)) (TRYABLE 6)) (TRYABLE 1))
+#+end_src
+
+#+begin_src lisp :load no :results output code
+(print-skeleton lc-skeleton lc-par-1)
+#+end_src
+
+#+RESULTS:
+#+begin_src lisp :load no
+(WITH-SKELETON (:TYPE (FUNCTION (TERM (LIST-OF LC-VALUE)) LC-VALUE)
+                :LAZY-EVALUATION-P T)
+  (LABELS ((ARITH-1 (LC-VALUE0 NAT1)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE LC-VALUE0
+               (CLO (EVAL-TOPLEVEL (CLO-BODY LC-VALUE0) (CLO-ENV LC-VALUE0)))
+               (NUM (NUM (+ NAT1 (NUM-VALUE LC-VALUE0))))
+               ((EQL BOT) 'BOT)))
+           (ARITH-2 (LC-VALUE2 TERM3 -LIST-OF-LC-VALUE-4)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE LC-VALUE2
+               (CLO (EVAL-TOPLEVEL TERM3 -LIST-OF-LC-VALUE-4))
+               (NUM
+                (ARITH-1 (EVAL-TOPLEVEL TERM3 -LIST-OF-LC-VALUE-4)
+                 (NUM-VALUE LC-VALUE2)))
+               ((EQL BOT) LC-VALUE2)))
+           (ARITH-EVAL (ARITH-TERM5 -LIST-OF-LC-VALUE-6)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE ARITH-TERM5
+               (LIT (NUM (LIT-NUM ARITH-TERM5)))
+               (ADD
+                (ARITH-2
+                 (EVAL-TOPLEVEL (ADD-R ARITH-TERM5) -LIST-OF-LC-VALUE-6)
+                 (ADD-L ARITH-TERM5) -LIST-OF-LC-VALUE-6))
+               ((EQL BOT) (ARITH-1 'BOT (+ (ZERO) (ZERO))))))
+           (COND-1 (NAT7 TERM8 TERM9 -LIST-OF-LC-VALUE-10)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE NAT7
+               ((INTEGER 0 0)
+                (COND-2 (EVAL-TOPLEVEL TERM9 -LIST-OF-LC-VALUE-10) TERM9 TERM8
+                 -LIST-OF-LC-VALUE-10))
+               ((AND FIXNUM (INTEGER 1)) 'BOT)))
+           (COND-2 (LC-VALUE11 TERM12 TERM13 -LIST-OF-LC-VALUE-14)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE LC-VALUE11
+               (CLO
+                (COND-2
+                 (EVAL-TOPLEVEL (CLO-BODY LC-VALUE11) -LIST-OF-LC-VALUE-14)
+                 TERM13 TERM12 -LIST-OF-LC-VALUE-14))
+               (NUM
+                (COND-2
+                 (COND-1 (NUM-VALUE LC-VALUE11) TERM12 TERM13
+                  -LIST-OF-LC-VALUE-14)
+                 TERM13 TERM12 -LIST-OF-LC-VALUE-14))
+               ((EQL BOT) (EVAL-TOPLEVEL TERM13 -LIST-OF-LC-VALUE-14))))
+           (COND-EVAL (COND-TERM15 -LIST-OF-LC-VALUE-16)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE COND-TERM15
+               (IFZ
+                (COND-2
+                 (EVAL-TOPLEVEL (IFZ-TEST COND-TERM15) -LIST-OF-LC-VALUE-16)
+                 (IFZ-ELSE COND-TERM15) (IFZ-THEN COND-TERM15)
+                 -LIST-OF-LC-VALUE-16))))
+           (LC-1 (LC-VALUE17 LC-VALUE18)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE LC-VALUE17
+               (CLO LC-VALUE17)
+               (NUM (CLO 'NIL 'BOT))
+               ((EQL BOT) LC-VALUE17)))
+           (LC-2 (LC-VALUE19 TERM20 -LIST-OF-LC-VALUE-21)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE LC-VALUE19
+               (CLO
+                (LC-2 (SAFE-NTH (ZERO) 'NIL) (CLO-BODY LC-VALUE19)
+                 (CONS (EVAL-TOPLEVEL TERM20 -LIST-OF-LC-VALUE-21)
+                       -LIST-OF-LC-VALUE-21)))
+               (NUM 'BOT)
+               ((EQL BOT) (EVAL-TOPLEVEL TERM20 -LIST-OF-LC-VALUE-21))))
+           (LC-EVAL (LC-TERM22 -LIST-OF-LC-VALUE-23)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE LC-TERM22
+               (VAR (SAFE-NTH (VAR-INDEX LC-TERM22) -LIST-OF-LC-VALUE-23))
+               (LAM
+                (LC-1 (CLO -LIST-OF-LC-VALUE-23 (LAM-BODY LC-TERM22))
+                 (EVAL-TOPLEVEL (LAM-BODY LC-TERM22) -LIST-OF-LC-VALUE-23)))
+               (APP
+                (LC-2
+                 (EVAL-TOPLEVEL (APP-OP LC-TERM22)
+                  (CONS (CLO 'NIL 'BOT) -LIST-OF-LC-VALUE-23))
+                 (APP-ARG LC-TERM22) -LIST-OF-LC-VALUE-23))))
+           (EVAL-TOPLEVEL (TERM ENV)
+             (ETYPECASE TERM
+               (ARITH-TERM (ARITH-EVAL TERM ENV))
+               (COND-TERM (COND-EVAL TERM ENV))
+               (LC-TERM (LC-EVAL TERM ENV)))))
+    (LIST #'ARITH-1 #'ARITH-2 #'ARITH-EVAL #'COND-1 #'COND-2 #'COND-EVAL #'LC-1
+          #'LC-2 #'LC-EVAL #'EVAL-TOPLEVEL)))
+NIL
+#+end_src
+
+*** Exceptions
+#+begin_src lisp
+(uiop:define-package #:genrec/experiments/exception
+    (:mix #:cl #:genrec #:serapeum))
+(in-package #:genrec/experiments/exception)
+#+end_src
+
+#+begin_src lisp
+(define-adt arith-term
+  (lit (num nat))
+  (add (l term) (r term)))
+(define-adt cond-term
+  (ifz (test term) (then term) (else term)))
+(define-adt lc-term
   (var (index nat))
   (lam (body term))
-  (app (op term) (arg term))
-  (lit (num nat))
-  (add (l term) (r term))
-  (err (code term)))
+  (app (op term) (arg term)))
+(define-adt exc-term
+  (err (code nat))
+  (handle (tryer term) (catcher term)))
+(define-union term arith-term cond-term lc-term exc-term)
 (define-adt value
   (clo (env (list-of value)) (body term))
-  (num (value nat)))
-(define-adt monad-value
-  (pure (value lcv))
-  (except (code nat)))
+  (num (value nat))
+  (erv (code nat)))
 (defun safe-nth (n l)
   (let ((cons (nthcdr n l)))
-    (if cons (pure (car cons)) (except 0))))
-(setf (get 'safe-nth 'arg-types)
-      (lambda (r)
-        (assert (equal r 'monad-lcv))
-        '(nat (list-of lcv))))
-
-(defproblem meval (term (list-of value)) monad-value
+    (if cons (car cons) (erv 0))))
+(setf (get 'safe-nth 'arg-types) (lambda (r) `(nat (list-of ,r))))
+(defproblem exc-eval
+    (term (list-of exc-value)) exc-value
     (term env)
-  (labels ((bind (monad function)
-             (etypecase monad
-               (pure (funcall function (pure-value monad)))
-               (except monad)))
-           (mapply (op arg)
-             (etypecase op
-               (clo (meval (clo-body op) (cons arg (clo-env op))))
-               (num (except 1))))
-           (meval (term env)
-             (etypecase term
-               (var (safe-nth (var-index term) env))
-               (lam (pure (clo env (lam-body term))))
-               (app (bind (meval (app-op term) env)
-                      (lambda (op)
-                        (bind (meval (app-arg term) env)
-                          (lambda (arg)
-                            (mapply op arg))))))
-               (lit (pure (num (lit-num term))))
-               (add
-                (bind (meval (add-l term) env)
-                  (lambda (l)
-                    (bind (meval (add-r term) env)
-                      (lambda (r)
-                        (etypecase l
-                          (clo (except 2))
-                          (num
-                           (etypecase r
-                             (clo (except 2))
-                             (num (+ (num-value l) (num-value r))))))))))))))
-    (meval term env)))
-
-#+nil (def monad-skeleton)
-
-(def examples
-  (inputs-to-examples
-   #'meval
-   (list (lam (var 0)) nil)
-   (list (lam (var 1)) nil)
-   (list (lam (var 0)) (list (num 1)))
-   (list (lam (var 1)) (list (num 1)))
-   (list (lam (var 1)) (list (clo nil (var 0))))
-   (list (var 0) (list (clo nil (var 0))))
-   (list (var 1) (list (clo nil (var 0))))
-   (list (lam (lam (var 0))) nil)
-   (list (app (lam (var 0)) (lam (var 0))) nil)
-   (list (app (var 0) (var 0)) nil)
-   (list (app (lam (var 0)) (var 0)) nil)
-   (list (app (var 0) (lam (var 0))) nil)
-   (list (app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 0))) nil)
-   (list (app (app (lam (lam (var 0))) (lam (var 1))) (lam (var 0))) nil)
-   (list (app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 1))) nil)
-   (list (app (lam (lam (var 0))) (lam (var 0))) nil)
-   (list (app (lam (lam (var 0))) (lam (var 1))) nil)
-   (list (app (lam (lam (var 1))) (lam (var 0))) nil)
-   (list (lit 0) nil)
-   (list (lit 1) nil)
-   (list (add (lit 0) (lam (var 0))) nil)
-   (list (add (lam (var 0)) (lit 0)) nil)
-   (list (add (lam (var 0)) (lit 2)) nil)
-   (list (add (lit 0) (lam (var 0))) nil)
-   (list (add (lit 2) (lit 0)) nil)
-   (list (add (lit 0) (lit 2)) nil)))
+  (etypecase term
+    (var (safe-nth (var-index term) env))
+    (app (let ((op (exc-eval (app-op term) env))
+               (arg (exc-eval (app-arg term) env)))
+           (typecase op
+             (clo (exc-eval (clo-body op) (cons arg (clo-env op))))
+             (erv op)
+             (t (erv 1)))))
+    (lam (clo env (lam-body term)))
+    (lit (num (lit-num term)))
+    (add (let ((l (exc-eval (add-l term) env))
+               (r (exc-eval (add-r term) env)))
+           (typecase l
+             (erv l)
+             (num (typecase r
+                    (erv r)
+                    (num (num (+ (num-value l) (num-value r))))
+                    (t (erv 1))))
+             (t (erv 1)))))
+    (ifz (let ((test (exc-eval (ifz-test term) env)))
+           (typecase test
+             (num (if (zerop (num-value test))
+                      (exc-eval (ifz-then term) env)
+                      (exc-eval (ifz-else term) env)))
+             (erv test)
+             (t (erv 1)))))
+    (err (erv (err-code term)))
+    (handle (let ((v (exc-eval (handle-tryer term) env)))
+              (if (erv-p v)
+                  (exc-eval (handle-catcher term) (cons (num (erv-code v)) env))
+                  v)))))
+(def arith-examples
+  (inputs-to-examples exc-eval
+    ((lit 0) nil)
+    ((lit 1) nil)
+    ((err 0) nil)
+    ((err 1) nil)
+    ((add (lit 0) (err 0)) nil)
+    ((add (err 0) (lit 0)) nil)
+    ((add (err 0) (lit 2)) nil)
+    ((add (lit 0) (err 1)) nil)
+    ((add (lit 2) (lit 0)) nil)
+    ((add (lit 0) (lit 2)) nil)
+    ((add (lit 1) (lit 2)) nil)))
+(def cond-examples
+  (inputs-to-examples exc-eval
+    ((ifz (lit 0) (lit 0) (lit 2)) nil)
+    ((ifz (lit 1) (lit 0) (lit 2)) nil)
+    ((ifz (lit 0) (add (lit 0) (lit 2)) (lit 0)) nil)
+    ((ifz (lit 0) (add (lit 1) (lit 2)) (lit 0)) nil)
+    ((ifz (lit 0) (err 0) (err 1)) nil)
+    ((ifz (lit 1) (lit 0) (add (lit 0) (lit 2))) nil)
+    ((ifz (lit 1) (lit 0) (add (lit 1) (lit 2))) nil)
+    ((ifz (lit 1) (err 0) (err 1)) nil)))
+(def skeleton
+  (call-graph-skeleton
+   (arith-1 (function (value nat) value)
+            arith-1 arith-2 eval-toplevel)
+   (arith-2 (function (value term (list-of value)) value)
+            arith-1 arith-2 eval-toplevel)
+   (arith-eval (function (arith-term (list-of value)) value)
+               arith-1 arith-2 eval-toplevel)
+   (cond-1 (function (nat term term (list-of value)) value)
+           cond-1 cond-2 eval-toplevel)
+   (cond-2 (function (value term term (list-of value)) value)
+           cond-1 cond-2 eval-toplevel)
+   (cond-eval (function (cond-term (list-of value)) value)
+              cond-1 cond-2 eval-toplevel)
+   (lc-1 (function (value value) value)
+         lc-1 lc-2 eval-toplevel)
+   (lc-2 (function (value term (list-of value)) value)
+         lc-1 lc-2 eval-toplevel)
+   (lc-eval (function (lc-term (list-of value)) value)
+            lc-1 lc-2 eval-toplevel)
+   (exc-1 (function (value term (list-of value)) value)
+          exc-1 eval-toplevel)
+   (exc-eval (function (exc-term (list-of value)) value)
+             exc-1 eval-toplevel)
+   (eval-toplevel (function (term (list-of value)) value)
+                  :code (term env)
+                  (etypecase term
+                    (arith-term (arith-eval term env))
+                    (cond-term (cond-eval term env))
+                    (lc-term (lc-eval term env))
+                    (exc-term (exc-eval term env))))))
 #+end_src
 
-#+begin_src lisp :load no :result output verbatim
-(solve-skeleton monad-skeleton monad-examples
-                '((safe-nth monad-lcv) (clo lcv) (cons (list-of lcv))))
+#+begin_src lisp :load no
+(def arith-par
+  (let ((genrec::*frozen-holes*
+          (genrec::holes-for-functions skeleton '(6 7 8 9))))
+    (solve-skeleton 'skeleton (append arith-examples cond-examples)
+                    '((+ nat) (succ nat) (num value) (erv value)))))
+arith-par
 #+end_src
+
+#+RESULTS:
+#+begin_src lisp :load no
+((TRYABLE 2) (TRYABLE 6) (NUM (ZERO)) (TRYABLE 4) (TRYABLE 3) (TRYABLE 4)
+ (TRYABLE 3) (TRYABLE 5) (TRYABLE 2) (TRYABLE 5) (NUM (ZERO)) (LIT (TRYABLE 3))
+ (NIL) (LIT (+ (TRYABLE 5) (TRYABLE 3))) (NIL) (TRYABLE 2) (TRYABLE 2)
+ (SUCC (TRYABLE 3)) (TRYABLE 2) (LIT (TRYABLE 3)) (NIL) (LIT (TRYABLE 3)) (NIL)
+ (TRYABLE 4) (TRYABLE 0) (ZERO) (TRYABLE 1) (TRYABLE 6) (TRYABLE 7) (TRYABLE 6)
+ (TRYABLE 3) (TRYABLE 5) (TRYABLE 2) (TRYABLE 3) (TRYABLE 2) (TRYABLE 5)
+ (TRYABLE 6) (TRYABLE 5) (TRYABLE 6) (TRYABLE 0) (TRYABLE 1)
+ (+ (TRYABLE 3) (TRYABLE 3)) (TRYABLE 0) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5)
+ (TRYABLE 6) (TRYABLE 4) (TRYABLE 2) (TRYABLE 3) (ERV (ZERO)) (LIT (TRYABLE 3))
+ (TRYABLE 5) (LIT (TRYABLE 3)) (TRYABLE 5) (NUM (TRYABLE 3)) (TRYABLE 0) (ZERO)
+ (TRYABLE 2) (TRYABLE 4) (TRYABLE 6) (TRYABLE 3) (TRYABLE 6) (TRYABLE 1)
+ (TRYABLE 3) (TRYABLE 5) (TRYABLE 4) (TRYABLE 6) (TRYABLE 1) (TRYABLE 4)
+ (TRYABLE 5) (TRYABLE 6) (TRYABLE 4) (TRYABLE 6) (TRYABLE 2) (TRYABLE 3)
+ (TRYABLE 5) (TRYABLE 6) (TRYABLE 7) (TRYABLE 0) (TRYABLE 6) (TRYABLE 6)
+ (TRYABLE 7) (TRYABLE 5) (TRYABLE 7) (TRYABLE 1) (ZERO) (TRYABLE 7) (TRYABLE 7)
+ (TRYABLE 8) (TRYABLE 0) (TRYABLE 4) (TRYABLE 6) (TRYABLE 3) (TRYABLE 4)
+ (TRYABLE 3) (TRYABLE 0) (TRYABLE 3) (TRYABLE 5) (TRYABLE 6) (TRYABLE 7)
+ (TRYABLE 0) (TRYABLE 6) (TRYABLE 6) (TRYABLE 7) (TRYABLE 5) (TRYABLE 7)
+ (TRYABLE 0) (TRYABLE 3) (TRYABLE 5) (TRYABLE 6) (TRYABLE 7) (TRYABLE 4)
+ (TRYABLE 6) (TRYABLE 6) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7) (TRYABLE 2) (ZERO)
+ (TRYABLE 3) (TRYABLE 4) (TRYABLE 7) (TRYABLE 2) (TRYABLE 4) (TRYABLE 5)
+ (TRYABLE 7) (TRYABLE 3) (TRYABLE 7) (TRYABLE 1) (NUM (ZERO)) (NUM (ZERO))
+ (NUM (ZERO)) (LIT (ZERO)) (NIL) (LIT (ZERO)) (NIL) (NUM (ZERO)) (NUM (ZERO))
+ (NUM (ZERO)) (NUM (ZERO)) (LIT (ZERO)) (NIL) (LIT (ZERO)) (NIL) (NUM (ZERO))
+ (NUM (ZERO)) (NUM (ZERO)) (NUM (ZERO)) (LIT (ZERO)) (NIL) (LIT (ZERO)) (NIL)
+ (NUM (ZERO)) (NUM (ZERO)) (NUM (ZERO)) (NUM (ZERO)) (LIT (ZERO)) (NIL)
+ (LIT (ZERO)) (NIL) (NUM (ZERO)) (NUM (ZERO)) (NUM (ZERO)) (NUM (ZERO))
+ (LIT (ZERO)) (NIL) (LIT (ZERO)) (NIL) (NUM (ZERO)) (NUM (ZERO)) (NUM (ZERO))
+ (NUM (ZERO)) (LIT (ZERO)) (NIL) (LIT (ZERO)) (NIL) (NUM (ZERO)) (NUM (ZERO))
+ (NUM (ZERO)) (NUM (ZERO)) (LIT (ZERO)) (NIL) (LIT (ZERO)) (NIL) (NUM (ZERO))
+ (NUM (ZERO)) (NUM (ZERO)) (NUM (ZERO)) (LIT (ZERO)) (NIL) (LIT (ZERO)) (NIL)
+ (NUM (ZERO)) (NUM (ZERO)) (NUM (ZERO)) (NUM (ZERO)) (LIT (ZERO)) (NIL)
+ (LIT (ZERO)) (NIL) (NUM (ZERO)) (NUM (ZERO)) (LIT (ZERO)) (NIL) (LIT (ZERO))
+ (NIL) (NUM (ZERO)) (NUM (ZERO)) (LIT (ZERO)) (NIL) (LIT (ZERO)) (NIL)
+ (NUM (ZERO)) (NUM (ZERO)) (LIT (ZERO)) (NIL) (LIT (ZERO)) (NIL) (NUM (ZERO))
+ (TRYABLE 0) (LIT (TRYABLE 2)) (TRYABLE 4) (LIT (TRYABLE 2)) (TRYABLE 4)
+ (ERV (TRYABLE 2)) (ERV (SUCC (ZERO))) (TRYABLE 2) (TRYABLE 5) (TRYABLE 2)
+ (TRYABLE 5) (TRYABLE 0))
+#+end_src
+
+#+begin_src lisp
+(def lc-examples
+  (inputs-to-examples exc-eval
+    ((lam (var 0)) nil)
+    ((lam (var 1)) nil)
+    ((lam (var 0)) (list (num 0)))
+    ((lam (var 1)) (list (num 0)))
+    ((lam (var 1)) (list (clo nil (var 0))))
+    ((var 0) (list (clo nil (var 0))))
+    ((var 1) (list (clo nil (var 0))))
+    ((lam (lam (var 0))) nil)
+    ((app (lam (var 0)) (lam (var 0))) nil)
+    ((app (var 0) (var 0)) nil)
+    ((app (lam (var 0)) (var 0)) nil)
+    ((app (var 0) (lam (var 0))) nil)
+    ((app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 0))) nil)
+    ((app (app (lam (lam (var 0))) (lam (var 1))) (lam (var 0))) nil)
+    ((app (app (lam (lam (var 0))) (lam (var 0))) (lam (var 1))) nil)
+    ((app (lam (lam (var 0))) (lam (var 0))) nil)
+    ((app (lam (lam (var 0))) (lam (var 1))) nil)
+    ((app (lam (lam (var 1))) (lam (var 0))) nil)
+    ((app (lam (var 0)) (lit 0)) nil)
+    ((app (lam (add (lit 1) (var 0))) (lit 0)) nil)
+    ((app (lam (add (lit 0) (var 0))) (lit 1)) nil)
+    ((app (lit 0) (lit 0)) nil)))
+#+end_src
+
+#+begin_src lisp :load no
+(def lc-par
+  (let ((genrec::*frozen-holes*
+          (union (genrec::compute-live-holes skeleton (append arith-examples cond-examples) arith-par)
+                 (genrec::holes-for-functions skeleton '(9))))
+        (genrec::*initial-par* arith-par))
+    (solve-skeleton 'skeleton lc-examples
+                    '((erv value) (succ nat)
+                      (clo value) (safe-nth value)
+                      (cons (list-of value))))))
+lc-par
+#+end_src
+
+#+RESULTS:
+#+begin_src lisp :load no
+((ERV (TRYABLE 6)) (TRYABLE 6) (TRYABLE 2) (TRYABLE 4) (TRYABLE 3) (TRYABLE 4)
+ (TRYABLE 3) (TRYABLE 2) (TRYABLE 4) (TRYABLE 3) (TRYABLE 1)
+ (LIT (SUCC (TRYABLE 3)))
+ (CONS (NUM (ZERO))
+       (CONS (TRYABLE 4) (CONS (NUM (ZERO)) (CONS (NUM (TRYABLE 3)) (NIL)))))
+ (LIT (+ (TRYABLE 5) (TRYABLE 3))) (NIL) (TRYABLE 2) (TRYABLE 1) (TRYABLE 3)
+ (TRYABLE 4) (LIT (TRYABLE 5)) (NIL) (LIT (TRYABLE 5)) (NIL) (TRYABLE 4)
+ (TRYABLE 0) (ZERO) (TRYABLE 0) (TRYABLE 6) (CONS (TRYABLE 5) (TRYABLE 7))
+ (TRYABLE 4) (CONS (NUM (ZERO)) (TRYABLE 3)) (TRYABLE 2) (TRYABLE 2)
+ (TRYABLE 3) (TRYABLE 1) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6)
+ (TRYABLE 0) (TRYABLE 1) (TRYABLE 3) (TRYABLE 0) (TRYABLE 5) (TRYABLE 6)
+ (TRYABLE 5) (TRYABLE 6) (TRYABLE 4) (ERV (ZERO)) (SUCC (TRYABLE 3))
+ (TRYABLE 0) (LIT (TRYABLE 3)) (TRYABLE 5) (LIT (TRYABLE 3))
+ (CONS (NUM (ZERO)) (TRYABLE 5)) (NUM (TRYABLE 3)) (TRYABLE 0) (SUCC (ZERO))
+ (TRYABLE 2) (TRYABLE 4) (TRYABLE 6) (TRYABLE 3) (TRYABLE 6) (TRYABLE 1)
+ (TRYABLE 3) (TRYABLE 4) (TRYABLE 4) (TRYABLE 6) (TRYABLE 2) (TRYABLE 4)
+ (TRYABLE 4) (CONS (NUM (ZERO)) (TRYABLE 6)) (TRYABLE 4) (TRYABLE 6)
+ (TRYABLE 2) (TRYABLE 3) (TRYABLE 5) (TRYABLE 6) (TRYABLE 7) (TRYABLE 0)
+ (TRYABLE 6) (TRYABLE 6) (TRYABLE 7) (TRYABLE 5)
+ (CONS (NUM (ZERO)) (TRYABLE 7)) (TRYABLE 1) (ZERO) (TRYABLE 7) (TRYABLE 6)
+ (TRYABLE 8) (TRYABLE 0) (TRYABLE 7) (TRYABLE 6)
+ (CONS (NUM (ZERO)) (TRYABLE 8)) (TRYABLE 7) (TRYABLE 8) (TRYABLE 5)
+ (TRYABLE 3) (TRYABLE 5) (TRYABLE 6) (TRYABLE 7) (ERV (TRYABLE 3)) (TRYABLE 5)
+ (TRYABLE 6) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7) (TRYABLE 0) (TRYABLE 3)
+ (TRYABLE 6) (TRYABLE 6) (CONS (NUM (ZERO)) (TRYABLE 7)) (TRYABLE 1)
+ (TRYABLE 6) (TRYABLE 6) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7) (TRYABLE 2)
+ (SUCC (ZERO)) (TRYABLE 4) (TRYABLE 4) (TRYABLE 7) (TRYABLE 2) (TRYABLE 4)
+ (TRYABLE 5) (TRYABLE 7) (TRYABLE 3) (TRYABLE 7) (TRYABLE 1) (TRYABLE 6)
+ (TRYABLE 0) (TRYABLE 2) (TRYABLE 4) (TRYABLE 3) (TRYABLE 4)
+ (CONS (TRYABLE 6) (TRYABLE 3)) (TRYABLE 2) (TRYABLE 0) (TRYABLE 1) (TRYABLE 4)
+ (LIT (TRYABLE 3)) (CONS (TRYABLE 4) (CONS (TRYABLE 0) (NIL)))
+ (LIT (TRYABLE 3)) (NIL) (ERV (SUCC (ZERO))) (TRYABLE 5) (TRYABLE 1)
+ (TRYABLE 5) (LIT (TRYABLE 3)) (CONS (TRYABLE 2) (CONS (TRYABLE 2) (NIL)))
+ (LIT (TRYABLE 3)) (CONS (TRYABLE 1) (NIL)) (TRYABLE 5) (TRYABLE 2) (TRYABLE 5)
+ (TRYABLE 0) (TRYABLE 4) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7) (TRYABLE 2)
+ (TRYABLE 0) (TRYABLE 2) (TRYABLE 2) (TRYABLE 5) (CONS (TRYABLE 4) (TRYABLE 6))
+ (TRYABLE 5) (TRYABLE 6) (SAFE-NTH (TRYABLE 3) (TRYABLE 6)) (TRYABLE 2)
+ (TRYABLE 0) (TRYABLE 2) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5)
+ (CONS (TRYABLE 1) (CONS (TRYABLE 4) (TRYABLE 6))) (TRYABLE 4) (TRYABLE 0)
+ (TRYABLE 1) (TRYABLE 2) (LIT (SUCC (TRYABLE 3))) (TRYABLE 5) (LIT (TRYABLE 3))
+ (TRYABLE 5) (TRYABLE 1) (ERV (ZERO)) (CLO (TRYABLE 5) (TRYABLE 3))
+ (ERV (ZERO)) (TRYABLE 3) (TRYABLE 5) (TRYABLE 3) (TRYABLE 5) (TRYABLE 0)
+ (TRYABLE 2) (TRYABLE 1) (TRYABLE 2) (TRYABLE 4) (TRYABLE 6) (TRYABLE 3)
+ (TRYABLE 6) (TRYABLE 0) (NUM (ZERO)) (LIT (ZERO)) (NIL) (LIT (ZERO)) (NIL)
+ (NUM (ZERO)) (NUM (ZERO)) (LIT (ZERO)) (NIL) (LIT (ZERO)) (NIL) (NUM (ZERO))
+ (NUM (ZERO)) (LIT (ZERO)) (NIL) (LIT (ZERO)) (NIL) (NUM (ZERO)) (TRYABLE 1)
+ (LIT (TRYABLE 2)) (CONS (TRYABLE 0) (CONS (NUM (ZERO)) (TRYABLE 4)))
+ (LIT (TRYABLE 2)) (TRYABLE 4) (ERV (TRYABLE 2)) (TRYABLE 0) (TRYABLE 3)
+ (TRYABLE 5) (TRYABLE 3) (TRYABLE 5) (TRYABLE 1))
+#+end_src
+
+#+begin_src lisp
+(def exc-examples
+  (inputs-to-examples exc-eval
+    ((handle (err 0) (var 0)) nil)
+    ((handle (err 1) (var 0)) nil)
+    ((handle (lit 1) (var 0)) nil)
+    ((handle (add (lit 1) (lit 2)) (var 0)) nil)))
+#+end_src
+
+#+begin_src lisp :load no
+(def exc-par
+  (let ((genrec::*frozen-holes*
+          (genrec::compute-live-holes skeleton
+                                      (append arith-examples cond-examples lc-examples)
+                                      lc-par))
+        (genrec::*initial-par* lc-par))
+    (solve-skeleton 'skeleton exc-examples
+                    '((erv value) (succ nat)))))
+exc-par
+#+end_src
+
+#+RESULTS:
+#+begin_src lisp :load no
+((ERV (ZERO)) (TRYABLE 6) (TRYABLE 5) (TRYABLE 4) (TRYABLE 3) (TRYABLE 4)
+ (TRYABLE 3) (TRYABLE 2) (TRYABLE 4) (TRYABLE 3) (TRYABLE 4) (LIT (TRYABLE 5))
+ (NIL) (LIT (+ (TRYABLE 5) (TRYABLE 3))) (NIL) (TRYABLE 2) (TRYABLE 0)
+ (TRYABLE 5) (TRYABLE 2) (LIT (TRYABLE 5)) (NIL) (LIT (TRYABLE 3)) (NIL)
+ (TRYABLE 4) (TRYABLE 0) (ZERO) (TRYABLE 1) (TRYABLE 6) (TRYABLE 7) (TRYABLE 4)
+ (TRYABLE 3) (TRYABLE 0) (TRYABLE 2) (TRYABLE 3) (TRYABLE 0) (TRYABLE 5)
+ (TRYABLE 6) (TRYABLE 5) (TRYABLE 6) (TRYABLE 0) (TRYABLE 0) (SUCC (TRYABLE 3))
+ (TRYABLE 0) (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6) (TRYABLE 4)
+ (TRYABLE 2) (TRYABLE 3) (ERV (ZERO)) (LIT (SUCC (TRYABLE 3))) (TRYABLE 5)
+ (LIT (TRYABLE 3)) (TRYABLE 5) (NUM (TRYABLE 3)) (ERV (ZERO)) (ZERO)
+ (TRYABLE 2) (TRYABLE 4) (TRYABLE 6) (TRYABLE 3) (TRYABLE 6) (TRYABLE 1)
+ (SUCC (TRYABLE 3)) (TRYABLE 4) (TRYABLE 4) (TRYABLE 6) (TRYABLE 1) (TRYABLE 5)
+ (TRYABLE 4) (TRYABLE 6) (TRYABLE 4) (TRYABLE 6) (TRYABLE 2) (TRYABLE 3)
+ (TRYABLE 5) (TRYABLE 6) (TRYABLE 7) (TRYABLE 0) (TRYABLE 6) (TRYABLE 6)
+ (TRYABLE 7) (TRYABLE 5) (TRYABLE 7) (TRYABLE 1) (ZERO) (TRYABLE 4) (TRYABLE 7)
+ (TRYABLE 3) (ERV (ZERO)) (TRYABLE 7) (TRYABLE 7) (TRYABLE 3) (TRYABLE 6)
+ (TRYABLE 3) (ERV (ZERO)) (TRYABLE 3) (TRYABLE 5) (TRYABLE 6) (TRYABLE 7)
+ (ERV (TRYABLE 3)) (TRYABLE 6) (TRYABLE 5) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7)
+ (TRYABLE 0) (TRYABLE 3) (TRYABLE 5) (TRYABLE 5) (TRYABLE 7) (TRYABLE 1)
+ (TRYABLE 6) (TRYABLE 5) (TRYABLE 7) (TRYABLE 6) (TRYABLE 7) (TRYABLE 2) (ZERO)
+ (TRYABLE 3) (TRYABLE 4) (TRYABLE 7) (TRYABLE 2) (TRYABLE 4) (TRYABLE 5)
+ (TRYABLE 7) (TRYABLE 3) (TRYABLE 7) (TRYABLE 1) (TRYABLE 2) (TRYABLE 0)
+ (TRYABLE 1) (TRYABLE 4) (TRYABLE 3) (TRYABLE 4) (CONS (TRYABLE 6) (TRYABLE 3))
+ (TRYABLE 2) (TRYABLE 4) (TRYABLE 1) (TRYABLE 5) (LIT (TRYABLE 3)) (NIL)
+ (LIT (TRYABLE 3)) (NIL) (ERV (SUCC (ZERO))) (TRYABLE 1) (ERV (ZERO))
+ (TRYABLE 5) (LIT (TRYABLE 3)) (CONS (ERV (ZERO)) (NIL)) (LIT (TRYABLE 3))
+ (NIL) (TRYABLE 5) (TRYABLE 1) (TRYABLE 5) (TRYABLE 0) (TRYABLE 4) (TRYABLE 7)
+ (TRYABLE 6) (TRYABLE 7) (TRYABLE 2) (TRYABLE 2) (TRYABLE 1) (TRYABLE 2)
+ (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6)
+ (SAFE-NTH (TRYABLE 3) (TRYABLE 6)) (TRYABLE 4) (TRYABLE 1) (TRYABLE 1)
+ (TRYABLE 5) (TRYABLE 6) (TRYABLE 5) (TRYABLE 6) (TRYABLE 4) (TRYABLE 1)
+ (TRYABLE 0) (TRYABLE 2) (LIT (SUCC (TRYABLE 3))) (TRYABLE 5) (LIT (TRYABLE 3))
+ (TRYABLE 5) (TRYABLE 1) (ERV (ZERO)) (CLO (TRYABLE 5) (TRYABLE 3)) (TRYABLE 0)
+ (TRYABLE 3) (TRYABLE 5) (TRYABLE 3) (TRYABLE 5) (TRYABLE 0) (TRYABLE 2)
+ (TRYABLE 1) (TRYABLE 2) (TRYABLE 4) (TRYABLE 6) (TRYABLE 3) (TRYABLE 6)
+ (TRYABLE 0) (TRYABLE 1) (TRYABLE 3) (TRYABLE 2) (TRYABLE 5) (TRYABLE 6)
+ (TRYABLE 1) (ERV (TRYABLE 2)) (TRYABLE 4) (TRYABLE 5) (TRYABLE 4) (TRYABLE 5)
+ (TRYABLE 0) (ERV (ZERO)) (TRYABLE 4) (TRYABLE 5) (LIT (TRYABLE 2)) (TRYABLE 5)
+ (TRYABLE 1) (ERV (ZERO)) (LIT (TRYABLE 2)) (TRYABLE 4) (LIT (TRYABLE 2))
+ (TRYABLE 4) (ERV (TRYABLE 2)) (TRYABLE 1) (TRYABLE 3) (TRYABLE 5) (TRYABLE 2)
+ (TRYABLE 5) (TRYABLE 0))
+#+end_src
+
+#+begin_src lisp :load no :results output code
+(print-skeleton skeleton exc-par)
+#+end_src
+
+#+RESULTS:
+#+begin_src lisp :load no
+
+(WITH-SKELETON (:TYPE (FUNCTION (TERM (LIST-OF VALUE)) VALUE)
+                :LAZY-EVALUATION-P T)
+  (LABELS ((ARITH-1 (VALUE0 NAT1)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE VALUE0
+               (CLO (EVAL-TOPLEVEL (CLO-BODY VALUE0) (CLO-ENV VALUE0)))
+               (NUM (EVAL-TOPLEVEL (LIT (+ NAT1 (NUM-VALUE VALUE0))) 'NIL))
+               (ERV VALUE0)))
+           (ARITH-2 (VALUE2 TERM3 -LIST-OF-VALUE-4)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE VALUE2
+               (CLO
+                (ARITH-1
+                 (ARITH-1
+                  (ARITH-1 (ARITH-1 (ARITH-1 VALUE28 (ZERO)) (ZERO)) (ZERO))
+                  (ZERO))
+                 (ZERO)))
+               (NUM
+                (ARITH-1 (EVAL-TOPLEVEL TERM3 -LIST-OF-VALUE-4)
+                 (NUM-VALUE VALUE2)))
+               (ERV VALUE2)))
+           (ARITH-EVAL (ARITH-TERM5 -LIST-OF-VALUE-6)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE ARITH-TERM5
+               (LIT (NUM (LIT-NUM ARITH-TERM5)))
+               (ADD
+                (ARITH-2 (EVAL-TOPLEVEL (ADD-L ARITH-TERM5) -LIST-OF-VALUE-6)
+                 (ADD-R ARITH-TERM5) -LIST-OF-VALUE-6))))
+           (COND-1 (NAT7 TERM8 TERM9 -LIST-OF-VALUE-10)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE NAT7
+               ((INTEGER 0 0) (EVAL-TOPLEVEL TERM8 -LIST-OF-VALUE-10))
+               ((AND FIXNUM (INTEGER 1))
+                (COND-2 (COND-1 (1- NAT7) TERM8 TERM9 -LIST-OF-VALUE-10) TERM9
+                 TERM9 -LIST-OF-VALUE-10))))
+           (COND-2 (VALUE11 TERM12 TERM13 -LIST-OF-VALUE-14)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE VALUE11
+               (CLO (ERV (ZERO)))
+               (NUM
+                (COND-1 (NUM-VALUE VALUE11) TERM12 TERM13 -LIST-OF-VALUE-14))
+               (ERV (EVAL-TOPLEVEL TERM13 -LIST-OF-VALUE-14))))
+           (COND-EVAL (COND-TERM15 -LIST-OF-VALUE-16)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE COND-TERM15
+               (IFZ
+                (COND-2
+                 (EVAL-TOPLEVEL (IFZ-TEST COND-TERM15) -LIST-OF-VALUE-16)
+                 (IFZ-THEN COND-TERM15) (IFZ-ELSE COND-TERM15)
+                 -LIST-OF-VALUE-16))))
+           (LC-1 (VALUE17 VALUE18)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE VALUE17
+               (CLO
+                (EVAL-TOPLEVEL (CLO-BODY VALUE17)
+                 (CONS VALUE18 (CLO-ENV VALUE17))))
+               (NUM (ERV (SUCC (ZERO))))
+               (ERV VALUE18)))
+           (LC-2 (VALUE19 TERM20 -LIST-OF-VALUE-21)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE VALUE19
+               (CLO (EVAL-TOPLEVEL TERM20 -LIST-OF-VALUE-21))
+               (NUM (SAFE-NTH (NUM-VALUE VALUE19) -LIST-OF-VALUE-21))
+               (ERV VALUE19)))
+           (LC-EVAL (LC-TERM22 -LIST-OF-VALUE-23)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE LC-TERM22
+               (VAR
+                (LC-2
+                 (EVAL-TOPLEVEL (LIT (VAR-INDEX LC-TERM22)) -LIST-OF-VALUE-23)
+                 (LIT (SUCC (VAR-INDEX LC-TERM22))) -LIST-OF-VALUE-23))
+               (LAM
+                (LC-1 (ERV (ZERO))
+                 (CLO -LIST-OF-VALUE-23 (LAM-BODY LC-TERM22))))
+               (APP
+                (LC-1 (EVAL-TOPLEVEL (APP-OP LC-TERM22) -LIST-OF-VALUE-23)
+                 (LC-2 (EVAL-TOPLEVEL (APP-OP LC-TERM22) -LIST-OF-VALUE-23)
+                  (APP-ARG LC-TERM22) -LIST-OF-VALUE-23)))))
+           (EXC-1 (VALUE24 TERM25 -LIST-OF-VALUE-26)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE VALUE24
+               (CLO (EVAL-TOPLEVEL TERM25 -LIST-OF-VALUE-26))
+               (NUM (EXC-1 (ERV (NUM-VALUE VALUE24)) TERM25 -LIST-OF-VALUE-26))
+               (ERV
+                (EVAL-TOPLEVEL (LIT (ERV-CODE VALUE24)) -LIST-OF-VALUE-26))))
+           (EXC-EVAL (EXC-TERM27 -LIST-OF-VALUE-28)
+             (GENREC::CHECK-RESOURCE-LIMIT)
+             (ETYPECASE EXC-TERM27
+               (ERR (ERV (ERR-CODE EXC-TERM27)))
+               (HANDLE
+                (EXC-1
+                 (EVAL-TOPLEVEL (HANDLE-TRYER EXC-TERM27) -LIST-OF-VALUE-28)
+                 (HANDLE-CATCHER EXC-TERM27) -LIST-OF-VALUE-28))))
+           (EVAL-TOPLEVEL (TERM ENV)
+             (ETYPECASE TERM
+               (ARITH-TERM (ARITH-EVAL TERM ENV))
+               (COND-TERM (COND-EVAL TERM ENV))
+               (LC-TERM (LC-EVAL TERM ENV))
+               (EXC-TERM (EXC-EVAL TERM ENV)))))
+    (LIST #'ARITH-1 #'ARITH-2 #'ARITH-EVAL #'COND-1 #'COND-2 #'COND-EVAL #'LC-1
+          #'LC-2 #'LC-EVAL #'EXC-1 #'EXC-EVAL #'EVAL-TOPLEVEL)))
+NIL
+#+end_src
+
+
+# Local Variables:
+# org-edit-src-content-indentation: 0
+# org-adapt-indentation: nil
+# org-export-use-babel: nil
+# org-hide-emphasis-markers: nil
+# org-link-abbrev-alist: (("wiki" . "https://en.wikipedia.org/wiki/"))
+# org-html-htmlize-output-type: css
+# End:
