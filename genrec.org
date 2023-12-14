@@ -804,7 +804,8 @@ A set of mutually recursive function, each dispatching on their first argument.
     `(,this-function
       ,args
       (check-resource-limit)
-      (compiler-let ((*function-index* ,function-index))
+      (compiler-let ((*function-index* ,function-index)
+                     (*gensym-counter* 0))
         (with-tryables ,(mapcar #'list args input-types)
           (dispatch-1 ,(car args) ,dispatch-type
                       ,@(mapcar
@@ -1211,6 +1212,9 @@ It should be `clrhash'-ed regularly to avoid growth in size for performance reas
 #+end_src
 
 The following perform one single trace of MCMC search, stopping after =*restart*= proposals (and returning =nil= if it stops without finding a solution). Users are expected to have some driver loop that calls it repeatedly until success.
+
+The conventional return values for search-related procedures are =(values correct-p par cost)=.
+
 #+begin_src lisp
 (defvar *max-stuck-iterations* 20)
 (defvar *accept-p* 'accept-p)
@@ -1218,31 +1222,35 @@ The following perform one single trace of MCMC search, stopping after =*restart*
 (defun mcmc-search (par mutate cost)
   (bind ((seed (or *seed* (random most-positive-fixnum)))
          (*random-state* (sb-ext:seed-random-state seed))
-         (n 0))
-    (catch 'random-search
-      (bind ((*edit-distance-memo* (make-edit-distance-memo))
-             (par-1 par)
-             (cost-1 (funcall cost par))
-             (stuck-iterations 0))
-        (vom:info "Search w/seed ~a started, cost ~a." seed cost-1)
-        (iter
-          (while (< n *restart*))
-          (incf n)
-          (for candidate = (funcall mutate par-1))
-          (for cost-2 = (funcall cost candidate))
-          (if (funcall *accept-p* cost-2 cost-1)
-              (psetf cost-1 cost-2 par-1 candidate
-                     stuck-iterations 0)
-              (progn
-                (incf stuck-iterations)
-                (when (>= stuck-iterations *max-stuck-iterations*)
-                  (vom:info "Stuck on one candidate for ~a iterations, give up."
-                            stuck-iterations)
-                  (throw 'random-search nil))))
-          (finally-protected
-           #-aws-lambda (print par-1)
-           (vom:info "Search w/seed ~a stopped, ~a accepted proposals, cost ~a."
-                     seed n cost-1)))))))
+         (n 0)
+         (*edit-distance-memo* (make-edit-distance-memo))
+         (par-1 par)
+         (cost-1 (funcall cost par))
+         (stuck-iterations 0)
+         (solved-p))
+    (vom:info "MCMC w/seed ~a started, cost ~a." seed cost-1)
+    (iter
+      (while (< n *restart*))
+      (incf n)
+      (for candidate = (funcall mutate par-1))
+      (for (values cost-2 correct-p) = (funcall cost candidate))
+      (when correct-p
+        (setq solved-p t)
+        (return))
+      (if (funcall *accept-p* cost-2 cost-1)
+          (psetf cost-1 cost-2 par-1 candidate
+                 stuck-iterations 0)
+          (progn
+            (incf stuck-iterations)
+            (when (>= stuck-iterations *max-stuck-iterations*)
+              (vom:info "Stuck on one candidate for ~a iterations, give up."
+                        stuck-iterations)
+              (return))))
+      (finally-protected
+       #-aws-lambda (print par-1)
+       (vom:info "Search w/seed ~a stopped, ~a accepted proposals, cost ~a."
+                 seed n cost-1)))
+    (values solved-p par-1 cost-1)))
 #+end_src
 
 #+begin_src lisp
@@ -1253,77 +1261,33 @@ The following perform one single trace of MCMC search, stopping after =*restart*
 
 *** The synthesizer
 #+begin_src lisp
-(defun skeleton-cost (skeleton examples par)
-  "Compute the cost given `examples' for the last function in `skeleton'.
-`examples' are of the form `(((input ...) expected-output) ...)'."
-  (let ((cost-error
-          (catch 'cost
-            (let ((functions (skeleton-functions skeleton par)))
-              (iter (for (input output) in examples)
-                (for output-1 =
-                     (with-resource-limit
-                       (handler-case
-                           (apply (lastcar functions) input)
-                         (error (c)
-                           (abort-evaluation (class-name (class-of c)))))))
-                (clrhash *edit-distance-memo*)
-                (sum (fastlog2
-                      (the fixnum
-                           (1+ (edit-distance
-                                (return-type (skeleton-type skeleton))
-                                output output-1)))))))))
-        (cost-norm (fastlog2
-                    (the fixnum
-                         (1+ (reduce #'+ par :key #'term-size))))))
-    (values cost-error cost-norm)))
-#+end_src
-
-The following are some experiemental variations of the cost function. They are not currently used.
-#+begin_src lisp :load no
+(defun skeleton-cost-error (skeleton examples par)
+  (catch 'cost
+    (let ((functions (skeleton-functions skeleton par)))
+      (iter (for (input output) in examples)
+        (for output-1 =
+             (with-resource-limit
+               (handler-case
+                   (apply (lastcar functions) input)
+                 (error (c)
+                   (abort-evaluation (class-name (class-of c)))))))
+        (clrhash *edit-distance-memo*)
+        (sum (fastlog2
+              (the fixnum
+                   (1+ (edit-distance
+                        (return-type (skeleton-type skeleton))
+                        output output-1)))))))))
+(defun skeleton-cost-norm (par)
+  (fastlog2
+   (the fixnum
+        (1+ (reduce #'+ par :key #'term-size)))))
 (defun skeleton-cost (skeleton examples par)
   "Compute the cost given `examples' for the last function in `skeleton'.
 `examples' are of the form `(((input ...) expected-output) ...)'.
-This weights every example 0.5x comparing to the preceding example.
-This is not currently used."
-  (let ((cost-error
-          (catch 'cost
-            (let ((functions (skeleton-functions skeleton par)))
-              (iter (for (input output) in examples)
-                (for weight initially 1.0 then (* weight 0.5))
-                (for output-1 =
-                     (with-resource-limit
-                       (apply (lastcar functions) input)))
-                (clrhash *edit-distance-memo*)
-                (sum (* weight (fastlog2
-                                (the fixnum
-                                     (1+ (edit-distance
-                                          (return-type (skeleton-type skeleton))
-                                          output output-1))))))))))
-        (cost-norm (fastlog2
-                    (the fixnum
-                         (1+ (reduce #'+ par :key #'term-size))))))
-    (values cost-error cost-norm)))
-(defun generalized-skeleton-cost (skeleton examples par)
-  "Compute the cost given `examples' for the any function in `skeleton'.
-`examples' are of the form `((label-number (input ...) expected-output) ...)'.
-This is not currently used."
-  (let ((cost-error
-          (catch 'cost
-            (let ((functions (skeleton-functions skeleton par)))
-              (iter (for (label input output) in examples)
-                (for output-1 =
-                     (with-resource-limit
-                       (apply (nth label functions) input)))
-                (clrhash *edit-distance-memo*)
-                (sum (fastlog2
-                      (the fixnum
-                           (1+ (edit-distance
-                                (return-type (skeleton-type skeleton))
-                                output output-1)))))))))
-        (cost-norm (fastlog2
-                    (the fixnum
-                         (1+ (reduce #'+ par :key #'term-size))))))
-    (values cost-error cost-norm)))
+Returns two values: the numerical cost and whether the solution is found."
+  (let ((cost-error (skeleton-cost-error skeleton examples par)))
+    (values (+ cost-error (skeleton-cost-norm par))
+            (zerop cost-error))))
 #+end_src
 
 The following perform one single trace of search ( using =*search-procedure*=). It returns =nil= if it stops without finding a solution. Users are expected to have some driver loop that calls it repeatedly until success. It's also useful for observing behavior of a single search trace.
@@ -1349,12 +1313,7 @@ The following perform one single trace of search ( using =*search-procedure*=). 
                  (bind (((hole . i) (choose-list mutable-hole-alist)))
                    (replace-nth par i (generate-mutation (nth i par) hole)))))
              (cost (par)
-               (bind (((:values cost-error cost-norm)
-                       (skeleton-cost skeleton examples par)))
-                 #+nil (print (list par cost-error cost-norm))
-                 (when (zerop cost-error)
-                   (throw 'random-search par))
-                 (+ cost-error cost-norm))))
+               (skeleton-cost skeleton examples par)))
       (mapc
        (lambda (entry) (apply #'add-library-function entry))
        library-functions)
@@ -1368,12 +1327,12 @@ The following perform one single trace of search ( using =*search-procedure*=). 
 (defun progressive-solve-skeleton-one-try (skeleton examples library-functions)
   (let (*initial-par*)
     (iter (for i below (length examples))
-      (for result =
+      (for (values correct-p par cost) =
            (solve-skeleton-one-try skeleton (subseq examples 0 (1+ i)) library-functions))
       (vom:info "Search with ~a examples complete." i)
-      (setq *initial-par* result)
-      (unless result (return)))
-    *initial-par*))
+      (setq *initial-par* par)
+      (unless correct-p (return (values nil par cost))) ;; TODO: more sensible cost?
+      (finally (return (values t par cost))))))
 #+end_src
 
 *** Parallel implementation
@@ -1393,6 +1352,10 @@ The following perform one single trace of search ( using =*search-procedure*=). 
     (finally (return (values vars values)))))
 
 (defun parallel-search (&rest thunks)
+  "Interleave search `thunks' in parallel.
+Each thunk is called with no argument, and can return any number of values.
+The first value must be `correct-p', which stops the search if it ever becomes true.
+All return values from the search that succeeds are returned verbatim."
   (unwind-protect
        (let ((channel (lparallel:make-channel))
              (lparallel:*task-category* 'parallel-search)
@@ -1407,11 +1370,11 @@ The following perform one single trace of search ( using =*search-procedure*=). 
                       (capture-context-vars)))
                 (lambda ()
                   (progv context-vars context-vals
-                    (list thunk (funcall thunk)))))))
+                    (cons thunk (multiple-value-list (funcall thunk))))))))
            (incf *seed*))
          (iter
-           (for (thunk par) = (lparallel:receive-result channel))
-           (when par (return (values par thunk)))
+           (for (thunk correct-p . rest) = (lparallel:receive-result channel))
+           (when correct-p (return (values-list (cons correct-p rest))))
            (lparallel:submit-task
             channel
             (bind (((:values context-vars context-vals)
@@ -1446,7 +1409,7 @@ The following perform one single trace of search ( using =*search-procedure*=). 
                (body (assoc-string event "body")))
           (list (cons "result"
                       (prin1-to-string
-                       (eval (read-from-string body)))))))
+                       (multiple-value-list (eval (read-from-string body))))))))
     (error (c)
       (vom:error "Error handling event ~s: ~a" event c)
       (list (cons "error" (format nil "~a" c))))))
@@ -1512,7 +1475,7 @@ Returns a `blackbird:promise' that resolves to evaluation result."
         (bind ((alist (jonathan:parse (babel:octets-to-string response) :as :alist))
                (result (assoc-string alist "result")))
           (if result
-              (read-from-string result)
+              (values-list (read-from-string result))
               (error "Remote error: ~a" (assoc-string alist "error"))))))))
 #+end_src
 
@@ -1545,37 +1508,38 @@ Returns a `blackbird:promise' that resolves to evaluation result."
 (setq *solve-skeleton-procedure* 'aws-lambda-solve-skeleton)
 #-aws-lambda
 (defun aws-lambda-solve-skeleton (skeleton examples library-functions)
-  (bind ((result)
-         (*seed* (or *seed* (random most-positive-fixnum))))
+  (bind (result (pars (make-hash-table)))
     (vom:info "Releasing the swarm with initial seed ~a." *seed*)
     (setq *search-launched* 0 *search-completed* 0 *search-failed* 0)
     (ensure-report-daemon)
-    (labels ((do-search ()
+    (labels ((do-search (seed)
                (unless result
                  (incf *search-launched*)
-                 (bind (((:values context-vars context-vals) (capture-context-vars))
+                 (bind ((*seed* seed) (*initial-par* (gethash seed pars))
+                        ((:values context-vars context-vals) (capture-context-vars))
                         (form `(progv ',context-vars ,(uneval context-vals)
                                  (solve-skeleton-one-try
                                   ',skeleton ',examples ',library-functions))))
-                   (incf *seed*)
                    (catcher
-                    (alet ((my-result (invoke-aws-lambda form)))
+                    (blackbird:multiple-promise-bind
+                        (correct-p par cost) (invoke-aws-lambda form)
+                      (declare (ignore cost))
                       (incf *search-completed*)
-                      (when my-result
-                        (vom:info "Voila!")
-                        (setq result my-result))
-                      (do-search))
+                      (when correct-p
+                        (vom:info "Search ~a succeeded" seed)
+                        (setq result par))
+                      (setf (gethash seed pars) par)
+                      (do-search seed))
                     (error (c)
                            (incf *search-failed*)
-                           (vom:error "Search failed: ~a" c)
-                           (do-search)))))))
+                           (vom:error "Search ~a failed: ~a" seed c)))))))
       (let ((*ssl-ctx* (cl-async-ssl::create-ssl-ctx)))
         (unwind-protect
              (progn
                (cl-async-ssl::ssl-ctx-set-default-verify-paths *ssl-ctx*)
                (as:with-event-loop ()
                  (iter (for i below *n-aws-workers*)
-                   (do-search))))
+                   (do-search i))))
           (cl-async-ssl::ssl-ctx-free *ssl-ctx*))))
     result))
 #+end_src
