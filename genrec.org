@@ -1508,28 +1508,39 @@ Returns a `blackbird:promise' that resolves to evaluation result."
 (setq *solve-skeleton-procedure* 'aws-lambda-solve-skeleton)
 #-aws-lambda
 (defun aws-lambda-solve-skeleton (skeleton examples library-functions)
-  (bind (result (pars (make-hash-table)))
+  (declare (optimize (debug 3)))
+  (bind (result
+         (pars (make-hash-table))
+         (counts (make-hash-table)))
     (vom:info "Releasing the swarm with initial seed ~a." *seed*)
     (setq *search-launched* 0 *search-completed* 0 *search-failed* 0)
     (ensure-report-daemon)
-    (labels ((do-search (seed)
+    (labels ((do-search (seed next-seed)
                (unless result
                  (incf *search-launched*)
-                 (bind ((*seed* seed) (*initial-par* (gethash seed pars))
+                 (bind ((*seed* next-seed)
+                        (*initial-par* (gethash seed pars))
+                        #+nil (initial-par *initial-par*)
                         ((:values context-vars context-vals) (capture-context-vars))
                         (form `(progv ',context-vars ,(uneval context-vals)
-                                 (solve-skeleton-one-try
-                                  ',skeleton ',examples ',library-functions))))
+                                 (values-list
+                                  (cons (random most-positive-fixnum)
+                                        (multiple-value-list
+                                         (solve-skeleton-one-try
+                                          ',skeleton ',examples ',library-functions)))))))
                    (catcher
                     (blackbird:multiple-promise-bind
-                        (correct-p par cost) (invoke-aws-lambda form)
+                        (next-seed correct-p par cost) (invoke-aws-lambda form)
                       (declare (ignore cost))
+                      #+nil (print (list form initial-par par))
                       (incf *search-completed*)
                       (when correct-p
                         (vom:info "Search ~a succeeded" seed)
                         (setq result par))
-                      (setf (gethash seed pars) par)
-                      (do-search seed))
+                      (setf (gethash seed pars) par
+                            (gethash seed counts) (1+ (or (gethash seed counts) 0)))
+                      (do-search #+nil (+ seed *n-aws-workers*)
+                        seed next-seed))
                     (error (c)
                            (incf *search-failed*)
                            (vom:error "Search ~a failed: ~a" seed c)))))))
@@ -1539,7 +1550,7 @@ Returns a `blackbird:promise' that resolves to evaluation result."
                (cl-async-ssl::ssl-ctx-set-default-verify-paths *ssl-ctx*)
                (as:with-event-loop ()
                  (iter (for i below *n-aws-workers*)
-                   (do-search i))))
+                   (do-search i (+ i 256)))))
           (cl-async-ssl::ssl-ctx-free *ssl-ctx*))))
     result))
 #+end_src
