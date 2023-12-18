@@ -204,6 +204,58 @@ We manipulate terms a lot. Will switching to hash-consing boost performance?
 
 It will probably not if we use the CL implementation provided hash table, which is really slow. =luckless= might have a chance, but still keep in mind that =cons= might be faster than you think and hash tables might be slower than you think!
 
+*** Context Vars
+**** Motivation
+The search algorithm depends on a number of parameters and state variables. Typically, these are treated in either of the following ways, none of which I feel completely satisfactory:
+- Pass as =&key= arguments. To propagate required parameter into inner procedures, this requires lots of boilerplates to manually pass =&rest args= argument list.
+- Define a =search-state= object/struct, and either
+  - store the current =search-state= in a special variable =*search-state*=, or
+  - pass around a single argument =search-state= (relevant procedures now have type =(function (search-state) search-state)=).
+  Disadvantage: have to manually write lots of accessors (=(search-state-some-slot *search-state*)=). Possible workaround: use a macro to generate =define-symbol-macro='s for each slots, but this is just simulating the =context-vars= facility in a more complicated way.
+- Store the parameters/states in some special variables. This is the basis of the =context-vars= facility, and using interesting states/variables is very convenient (just normal variable access, no need to manually pass anything).
+
+The =context-vars= facility solves the following problems not provided by vanilla special variables:
+- Capture/save/restore the "dynamic context" (the set of current parameter/states). Useful for:
+  - Transport parameter/state to remote Lisp images
+  - Use the search procedures in a functional/reproducible way (wrap with =with-save-context-vars=, or bind input parameter/states with =progv=)
+- Convert between special variable bindings and plists (=&key= argument lists)
+**** Implementation
+#+begin_src lisp
+(defvar *context-vars*
+  '(*beta* *search-procedure* *n-accepted* *max-accepted* *max-stuck-iterations*
+    *seed* *prng* *frozen-holes* *par* *cost* *solved-p* *eval-toplevel*))
+(defun capture-context-vars ()
+  (iter
+    (for s in *context-vars*)
+    (unless (equalp (symbol-value s)
+                    (sb-ext:symbol-global-value s))
+      (collect s into vars)
+      (collect (symbol-value s) into values))
+    (finally (return (values vars values)))))
+(defun context-var-to-keyword (symbol)
+  (assert (eq (symbol-package symbol) (find-package "GENREC")))
+  (bind ((name (symbol-name symbol)))
+    (assert (eq (aref name 0) #\*))
+    (assert (eq (aref name (1- (length name))) #\*))
+    (intern (subseq name 1 (1- (length name))) "KEYWORD")))
+(defun keyword-to-context-var (keyword)
+  (assert (eq (symbol-package keyword) (find-package "KEYWORD")))
+  (or (find-symbol (s:concat "*" (symbol-name keyword) "*") "GENREC")
+      (error "Unknown keyword ~a for context var." keyword)))
+(defun context-vars-plist ()
+  (bind (((:values context-vars context-vals)
+          (capture-context-vars)))
+    (iter (for s in context-vars)
+      (for v in context-vals)
+      (nconcing (list (context-var-to-keyword s) v)))))
+(defun plist-context-vars (plist)
+  (iter (for (k v) on plist by #'cddr)
+    (set (keyword-to-context-var k) v)))
+(defmacro with-saved-context-vars ((&optional context-bindings) &body body)
+  `(progv *context-vars* (mapcar #'symbol-value *context-vars*)
+     ,(when context-bindings `(plist-context-vars ,context-bindings))
+     ,@body))
+#+end_src
 ** Type utilities
 Here we have a poor man's polymorphic type system:
 - A /type/ can be either a symbol (e.g. ~nat~) or a list with a symbol in its =car= (e.g. ~(list-of nat)~)
@@ -1019,7 +1071,7 @@ Properly-nested [[wiki:paramorphism][paramorphism]].
 (defmacro choice (&body clauses)
   (let ((norm (apply #'+ (mapcar #'car clauses)))
         (cdf 0.0))
-    `(let ((%random-choice (random ,norm)))
+    `(let ((%random-choice (random-state:random-float *prng* 0.0 ,norm)))
        (cond ,@ (iter (for (prob . body) in clauses)
                   (for i from 0)
                   (incf cdf prob)
@@ -1027,7 +1079,7 @@ Properly-nested [[wiki:paramorphism][paramorphism]].
                 (t (error "This is impossible."))))))
 (defun choose-list (list)
   (if list
-      (let ((i (random (length list))))
+      (let ((i (random-state:random-int *prng* 0 (1- (length list)))))
         (values (nth i list) i))
       (fail)))
 #+end_src
@@ -1201,62 +1253,60 @@ It should be `clrhash'-ed regularly to avoid growth in size for performance reas
   (defun accept-p (cost-2 cost-1)
     (declare (type single-float cost-2 cost-1 *beta*))
     (or (< cost-2 cost-1)
-        (< (+ (fastlog2 (1+ (random 1000))) (* *beta* (- cost-2 cost-1)))
+        (< (+ (fastlog2 (1+ (the fixnum (random-state:random-int *prng* 0 1000))))
+              (* *beta* (- cost-2 cost-1)))
            (fastlog2 (1+ 1000))))))
 #+end_src
 
 *** Generic random search procedure
 #+begin_src lisp
 (defvar *search-procedure* 'mcmc-search)
-(defvar *restart* 500000)
+(defvar *n-accepted* 0 "Current number of accepted proposals.")
+(defvar *max-accepted* 500000 "Stop the search when `*n-accepted*'=`*max-accepted*'.")
+(defvar *par* nil "Current candidate parameter.")
+(defvar *cost* nil "Current candidate cost.")
+(defvar *solved-p* nil)
 #+end_src
 
-The following perform one single trace of MCMC search, stopping after =*restart*= proposals (and returning =nil= if it stops without finding a solution). Users are expected to have some driver loop that calls it repeatedly until success.
-
-The conventional return values for search-related procedures are =(values correct-p par cost)=.
+The following perform one single trace of MCMC search, stopping after =*n-accepted*= reaches =*max-accepted*=.. Users are expected to have some driver loop that calls it repeatedly until success.
 
 #+begin_src lisp
 (defvar *max-stuck-iterations* 20)
 (defvar *accept-p* 'accept-p)
 (defvar *seed* 0)
-(defun mcmc-search (par mutate cost)
-  (bind ((seed (or *seed* (random most-positive-fixnum)))
-         (*random-state* (sb-ext:seed-random-state seed))
-         (n 0)
-         (*edit-distance-memo* (make-edit-distance-memo))
-         (par-1 par)
-         (cost-1 (funcall cost par))
-         (stuck-iterations 0)
-         (solved-p))
-    (vom:info "MCMC w/seed ~a started, cost ~a." seed cost-1)
-    (iter
-      (while (< n *restart*))
-      (incf n)
-      (for candidate = (funcall mutate par-1))
-      (for (values cost-2 correct-p) = (funcall cost candidate))
-      (when correct-p
-        (setq solved-p t)
-        (return))
-      (if (funcall *accept-p* cost-2 cost-1)
-          (psetf cost-1 cost-2 par-1 candidate
-                 stuck-iterations 0)
-          (progn
-            (incf stuck-iterations)
-            (when (>= stuck-iterations *max-stuck-iterations*)
-              (vom:info "Stuck on one candidate for ~a iterations, give up."
-                        stuck-iterations)
-              (return))))
-      (finally-protected
-       #-aws-lambda (print par-1)
-       (vom:info "Search w/seed ~a stopped, ~a accepted proposals, cost ~a."
-                 seed n cost-1)))
-    (values solved-p par-1 cost-1)))
+(defvar *prng* nil)
+
+(defun mcmc-search-one-step (mutate cost)
+  "Increments `*n-accepted*' if succesful."
+  (iter (for i below *max-stuck-iterations*)
+    (bind ((new-par (funcall mutate *par*))
+           ((:values new-cost correct-p) (funcall cost new-par)))
+      (when (or correct-p (funcall *accept-p* new-cost *cost*))
+        (incf *n-accepted*)
+        (psetf *cost* new-cost *par* new-par *solved-p* correct-p)
+        (return)))
+    (finally
+        (vom:info "Stuck on ~a for ~a iterations, give up." *par* i))))
+
+(defun mcmc-search (mutate cost)
+  (ensure *cost* (funcall cost *par*))
+  (vom:info "MCMC seed=~a started, cost ~a." *seed* *cost*)
+  (iter
+    (while (< *n-accepted* *max-accepted*))
+    (for n-before = *n-accepted*)
+    (mcmc-search-one-step mutate cost)
+    (while (> *n-accepted* n-before)) ;; Otherwise `mcmc-search-one-step' fails
+    (until *solved-p*)
+    (finally-protected
+     #+nil (print *par*)
+     (vom:info "MCMC seed=~a stopped, ~a accepted proposals, cost ~a."
+               *seed* *n-accepted* *cost*))))
 #+end_src
 
 #+begin_src lisp
-(defun greedy-search (par mutate cost)
+(defun greedy-search (mutate cost)
   (let ((*accept-p* #'<))
-    (mcmc-search par mutate cost)))
+    (mcmc-search mutate cost)))
 #+end_src
 
 *** The synthesizer
@@ -1292,38 +1342,42 @@ Returns two values: the numerical cost and whether the solution is found."
 
 The following perform one single trace of search ( using =*search-procedure*=). It returns =nil= if it stops without finding a solution. Users are expected to have some driver loop that calls it repeatedly until success. It's also useful for observing behavior of a single search trace.
 #+begin_src lisp
-(defvar *initial-par* nil)
 (defvar *frozen-holes* nil)
+
 (defun resolve-variable (symbol-or-object)
   (if (symbolp symbol-or-object)
       (eval symbol-or-object)
       symbol-or-object))
-(defun solve-skeleton-one-try (skeleton examples library-functions)
+
+(defun solve-skeleton-one-try (skeleton examples library-functions &rest context-bindings)
   (psetq skeleton (resolve-variable skeleton)
          examples (resolve-variable examples)
          library-functions (resolve-variable library-functions))
-  (let ((*library-table* (make-hash-table :test 'equal))
-        (mutable-hole-alist
-          (iter (for i from 0)
-            (for h in (skeleton-holes skeleton))
-            (unless (member i *frozen-holes*)
-              (collect (cons h i))))))
-    (labels ((mutate (par)
-               (one-value
-                 (bind (((hole . i) (choose-list mutable-hole-alist)))
-                   (replace-nth par i (generate-mutation (nth i par) hole)))))
-             (cost (par)
-               (skeleton-cost skeleton examples par)))
-      (mapc
-       (lambda (entry) (apply #'add-library-function entry))
-       library-functions)
-      (funcall *search-procedure*
-               (or *initial-par*
-                   (mapcar (compose #'default-term #'hole-type) (skeleton-holes skeleton)))
-               #'mutate #'cost))))
+  (with-saved-context-vars (context-bindings)
+    (ensure *prng* (random-state:make-generator 'random-state:pcg *seed*))
+    (ensure *par* (mapcar (compose #'default-term #'hole-type) (skeleton-holes skeleton)))
+    (bind ((*library-table* (make-hash-table :test 'equal))
+           (*edit-distance-memo* (make-edit-distance-memo))
+           (mutable-hole-alist
+            (iter (for i from 0)
+              (for h in (skeleton-holes skeleton))
+              (unless (member i *frozen-holes*)
+                (collect (cons h i))))))
+      (labels ((mutate (par)
+                 (one-value
+                   (bind (((hole . i) (choose-list mutable-hole-alist)))
+                     (replace-nth par i (generate-mutation (nth i par) hole)))))
+               (cost (par)
+                 (skeleton-cost skeleton examples par)))
+        (mapc
+         (lambda (entry) (apply #'add-library-function entry))
+         library-functions)
+        (funcall *search-procedure* #'mutate #'cost)
+        (context-vars-plist)))))
 #+end_src
 
 #+begin_src lisp :load no
+;; Obsolete
 (defun progressive-solve-skeleton-one-try (skeleton examples library-functions)
   (let (*initial-par*)
     (iter (for i below (length examples))
@@ -1337,59 +1391,42 @@ The following perform one single trace of search ( using =*search-procedure*=). 
 
 *** Parallel implementation
 #+begin_src lisp
-(defvar *context-vars*
-  '(*beta* *search-procedure* *restart* *max-stuck-iterations* *seed*
-    *frozen-holes* *initial-par* *eval-toplevel*))
-(defvar *context-vars-default-values*
-  (iter (for s in *context-vars*) (collect (symbol-value s))))
-(defun capture-context-vars ()
-  (iter
-    (for s in *context-vars*)
-    (for v in *context-vars-default-values*)
-    (unless (equalp (symbol-value s) v)
-      (collect s into vars)
-      (collect (symbol-value s) into values))
-    (finally (return (values vars values)))))
-
 (defun parallel-search (&rest thunks)
   "Interleave search `thunks' in parallel.
-Each thunk is called with no argument, and can return any number of values.
-The first value must be `correct-p', which stops the search if it ever becomes true.
-All return values from the search that succeeds are returned verbatim."
+Each thunk is called with no argument, and should return a plist from `context-vars-plist'.
+The search stop if any thunk returns a plist with `*solved-p*' bind to true, and this plist is returned."
   (unwind-protect
        (let ((channel (lparallel:make-channel))
              (lparallel:*task-category* 'parallel-search)
-             (*seed* (or *seed* (random most-positive-fixnum)))
+             (*seed* *seed*)
              (n-concurrency (ceiling (lparallel:kernel-worker-count) (length thunks))))
-         (vom:info "Releasing the swarm with initial seed ~a." *seed*)
-         (iter (for _ below n-concurrency)
-           (iter (for thunk in thunks)
-             (lparallel:submit-task
-              channel
-              (bind (((:values context-vars context-vals)
-                      (capture-context-vars)))
-                (lambda ()
-                  (progv context-vars context-vals
-                    (cons thunk (multiple-value-list (funcall thunk))))))))
-           (incf *seed*))
-         (iter
-           (for (thunk correct-p . rest) = (lparallel:receive-result channel))
-           (when correct-p (return (values-list (cons correct-p rest))))
-           (lparallel:submit-task
-            channel
-            (bind (((:values context-vars context-vals)
-                    (capture-context-vars)))
-              (lambda ()
-                (progv context-vars context-vals
-                  (list thunk (funcall thunk))))))
-           (incf *seed*)))
+         (labels ((submit-task (thunk)
+                    (lparallel:submit-task
+                     channel
+                     (bind (((:values context-vars context-vals)
+                             (capture-context-vars)))
+                       (lambda ()
+                         (progv context-vars context-vals
+                           (cons thunk (funcall thunk))))))))
+           (vom:info "Releasing the swarm with initial seed ~a." *seed*)
+           (iter (for _ below n-concurrency)
+             (iter (for thunk in thunks)
+               (submit-task thunk))
+             (incf *seed*))
+           (iter
+             (for (thunk . result-bindings) = (lparallel:receive-result channel))
+             (when (getf result-bindings :solved-p)
+               (return result-bindings))
+             (submit-task thunk)
+             (incf *seed*))))
     (lparallel:kill-tasks 'parallel-search)))
 #+end_src
 
 #+begin_src lisp
 (defvar *solve-skeleton-procedure* 'parallel-solve-skeleton)
-(defun solve-skeleton (skeleton examples library-functions)
-  (funcall *solve-skeleton-procedure* skeleton examples library-functions))
+(defun solve-skeleton (skeleton examples library-functions &rest context-bindings)
+  (with-saved-context-vars (context-bindings)
+    (funcall *solve-skeleton-procedure* skeleton examples library-functions)))
 (defun parallel-solve-skeleton (skeleton examples library-functions)
   (parallel-search
    (lambda ()
@@ -1463,20 +1500,19 @@ Note that we use =invoke-aws-lambda= to send S-expression to AWS Lambda, which h
   "Evaluate `form' on a AWS Lambda worker.
 Returns a `blackbird:promise' that resolves to evaluation result."
   (with-standard-io-syntax
-    (let ((*print-circle* t))
-      (alet ((response
-              (carrier:request
-               "https://jggef6y3vjkjcrbfqzexuwoure0amokc.lambda-url.us-west-1.on.aws/"
-               :method :post
-               :headers '(:content-type "text/plain")
-               :body (prin1-to-string form)
-               :return-body t
-               :ssl-ctx *ssl-ctx*)))
-        (bind ((alist (jonathan:parse (babel:octets-to-string response) :as :alist))
-               (result (assoc-string alist "result")))
-          (if result
-              (values-list (read-from-string result))
-              (error "Remote error: ~a" (assoc-string alist "error"))))))))
+    (alet ((response
+            (carrier:request
+             "https://jggef6y3vjkjcrbfqzexuwoure0amokc.lambda-url.us-west-1.on.aws/"
+             :method :post
+             :headers '(:content-type "text/plain")
+             :body (write-to-string form :readably t :escape t :circle t)
+             :return-body t
+             :ssl-ctx *ssl-ctx*)))
+      (bind ((alist (jonathan:parse (babel:octets-to-string response) :as :alist))
+             (result (assoc-string alist "result")))
+        (if result
+            (values-list (read-from-string result))
+            (error "Remote error: ~a" (assoc-string alist "error")))))))
 #+end_src
 
 **** Search Procedure
@@ -1507,50 +1543,46 @@ Returns a `blackbird:promise' that resolves to evaluation result."
 #-aws-lambda
 (setq *solve-skeleton-procedure* 'aws-lambda-solve-skeleton)
 #-aws-lambda
+(defvar *time-slice-n-accepted* 100000)
+#-aws-lambda
 (defun aws-lambda-solve-skeleton (skeleton examples library-functions)
   (declare (optimize (debug 3)))
-  (bind (result
-         (pars (make-hash-table))
-         (counts (make-hash-table)))
+  (bind (result)
     (vom:info "Releasing the swarm with initial seed ~a." *seed*)
     (setq *search-launched* 0 *search-completed* 0 *search-failed* 0)
     (ensure-report-daemon)
-    (labels ((do-search (seed next-seed)
+    (labels ((do-search (context-bindings)
                (unless result
+                 (setf (getf context-bindings :max-accepted)
+                       (+ (getf context-bindings :n-accepted 0)
+                          *time-slice-n-accepted*))
                  (incf *search-launched*)
-                 (bind ((*seed* next-seed)
-                        (*initial-par* (gethash seed pars))
-                        #+nil (initial-par *initial-par*)
-                        ((:values context-vars context-vals) (capture-context-vars))
-                        (form `(progv ',context-vars ,(uneval context-vals)
-                                 (values-list
-                                  (cons (random most-positive-fixnum)
-                                        (multiple-value-list
-                                         (solve-skeleton-one-try
-                                          ',skeleton ',examples ',library-functions)))))))
+                 (bind ((form `(apply #'solve-skeleton-one-try
+                                      ',skeleton ',examples ',library-functions
+                                      ,(uneval context-bindings))))
                    (catcher
-                    (blackbird:multiple-promise-bind
-                        (next-seed correct-p par cost) (invoke-aws-lambda form)
-                      (declare (ignore cost))
-                      #+nil (print (list form initial-par par))
+                    (alet ((result-bindings (invoke-aws-lambda form)))
+                      #+nil (print (list seed next-seed initial-par par))
                       (incf *search-completed*)
-                      (when correct-p
-                        (vom:info "Search ~a succeeded" seed)
-                        (setq result par))
-                      (setf (gethash seed pars) par
-                            (gethash seed counts) (1+ (or (gethash seed counts) 0)))
-                      (do-search #+nil (+ seed *n-aws-workers*)
-                        seed next-seed))
+                      (when (getf result-bindings :solved-p)
+                        (vom:info "Search ~a succeeded"
+                                  (getf context-bindings :seed))
+                        (setq result result-bindings))
+                      (when (< (getf context-bindings :max-accepted)
+                             *max-accepted*)
+                          (do-search result-bindings)))
                     (error (c)
                            (incf *search-failed*)
-                           (vom:error "Search ~a failed: ~a" seed c)))))))
+                           (vom:error "Search ~a failed: ~a"
+                                      (getf context-bindings :seed) c)))))))
       (let ((*ssl-ctx* (cl-async-ssl::create-ssl-ctx)))
         (unwind-protect
              (progn
                (cl-async-ssl::ssl-ctx-set-default-verify-paths *ssl-ctx*)
                (as:with-event-loop ()
                  (iter (for i below *n-aws-workers*)
-                   (do-search i (+ i 256)))))
+                   (let ((*seed* (+ *seed* i)))
+                     (do-search (context-vars-plist))))))
           (cl-async-ssl::ssl-ctx-free *ssl-ctx*))))
     result))
 #+end_src
@@ -1584,7 +1616,7 @@ Returns a `blackbird:promise' that resolves to evaluation result."
       (collect i))))
 #+end_src
 
-#+begin_src lisp
+#+begin_src lisp :load no
 (defun stratified-solve (skeleton examples-list library-functions disabled-functions-list)
   (let (*initial-par* *frozen-holes*)
     (iter (for examples in examples-list)
@@ -1662,7 +1694,7 @@ Returns a `blackbird:promise' that resolves to evaluation result."
 ** Test Generation
 #+begin_src lisp
 (defun sample (type)
-  (let ((op (nth (random (length (constructors type)))
+  (let ((op (nth (random-state:random-int *prng* 0 (1- (length (constructors type))))
                  (constructors type))))
     (if (fboundp op)
         (apply op (mapcar #'sample (arg-types op type)))

@@ -7,6 +7,7 @@
                :lparallel
                :vom
                :luckless
+               :random-state
                #-aws-lambda :carrier
                :jonathan)
   :components ((:org "genrec")
